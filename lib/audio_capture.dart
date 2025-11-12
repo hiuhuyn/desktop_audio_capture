@@ -5,10 +5,15 @@
 // platforms in the `pubspec.yaml` at
 // https://flutter.dev/to/pubspec-plugin-platforms.
 
-import 'audio_capture_platform_interface.dart';
+export 'package:audio_capture/mic/mic_audio_capture.dart';
+export 'package:audio_capture/system/system_audio_capture.dart';
 
-class AudioCapture {
-  Future<String?> getPlatformVersion() {
-    return AudioCapturePlatform.instance.getPlatformVersion();
-  }
+abstract class AudioCapture {
+  Future<void> startCapture({AudioCaptureConfig? config});
+  Future<void> stopCapture();
+  Future<bool> isSupported();
+  Future<bool> requestPermissions();
+  Future<bool> isCapturing();
 }
+
+abstract class AudioCaptureConfig {}

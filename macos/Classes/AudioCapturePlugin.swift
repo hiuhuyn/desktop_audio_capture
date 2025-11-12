@@ -6,6 +6,13 @@ public class AudioCapturePlugin: NSObject, FlutterPlugin {
     let channel = FlutterMethodChannel(name: "audio_capture", binaryMessenger: registrar.messenger)
     let instance = AudioCapturePlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
+
+    // Register the microphone plugin
+    MicCapturePlugin.register(with: registrar)
+
+    // Register the system audio plugin
+    SystemCapturePlugin.register(with: registrar)
+
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
