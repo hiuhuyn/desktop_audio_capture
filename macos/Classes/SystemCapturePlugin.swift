@@ -1,22 +1,96 @@
 import Cocoa
 import FlutterMacOS
 import AVFoundation
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
+// MARK: - Error Types
+enum CaptureError: Error {
+    case noPermission
+    case noDisplay
+    case alreadyCapturing
+    case notCapturing
+    case invalidConfiguration(String)
+    case streamCreationFailed
+    case captureStartFailed(Error)
+    case captureStopFailed(Error)
+    
+    var message: String {
+        switch self {
+        case .noPermission:
+            return "Screen recording permission not granted"
+        case .noDisplay:
+            return "No display found"
+        case .alreadyCapturing:
+            return "Capture already in progress"
+        case .notCapturing:
+            return "No active capture session"
+        case .invalidConfiguration(let detail):
+            return "Invalid configuration: \(detail)"
+        case .streamCreationFailed:
+            return "Failed to create capture stream"
+        case .captureStartFailed(let error):
+            return "Failed to start capture: \(error.localizedDescription)"
+        case .captureStopFailed(let error):
+            return "Failed to stop capture: \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - Audio Configuration
+struct AudioConfiguration {
+    let sampleRate: Double
+    let channelCount: Int
+    
+    static let `default` = AudioConfiguration(sampleRate: 16000, channelCount: 1)
+    
+    static func from(_ dict: [String: Any]?) -> Result<AudioConfiguration, CaptureError> {
+        guard let dict = dict else {
+            return .success(.default)
+        }
+        
+        let sampleRate = (dict["sampleRate"] as? NSNumber)?.doubleValue ?? 16000
+        let channelCount = (dict["channels"] as? NSNumber)?.intValue ?? 1
+        
+        // Validate
+        guard [8000, 16000, 44100, 48000].contains(Int(sampleRate)) else {
+            return .failure(.invalidConfiguration("Sample rate must be 8000, 16000, 44100, or 48000"))
+        }
+        
+        guard (1...2).contains(channelCount) else {
+            return .failure(.invalidConfiguration("Channel count must be 1 or 2"))
+        }
+        
+        return .success(AudioConfiguration(sampleRate: sampleRate, channelCount: channelCount))
+    }
+}
+
+// MARK: - Main Plugin
 @available(macOS 13.0, *)
-class SystemCapturePlugin: NSObject, FlutterPlugin {
+final class SystemCapturePlugin: NSObject, FlutterPlugin, @unchecked Sendable {
     private var methodChannel: FlutterMethodChannel?
     private var eventChannel: FlutterEventChannel?
     private var eventSink: FlutterEventSink?
     
     private var statusEventChannel: FlutterEventChannel?
-    var statusEventSink: FlutterEventSink?
+    var statusEventSink: FlutterEventSink?  // Changed to var for access from handler
 
     private var stream: SCStream?
     private var streamOutput: StreamOutput?
-    var isCapturing = false
     
-    // Serial queue to ensure thread safety
+    // Thread-safe state management using serial queue
+    private let stateQueue = DispatchQueue(label: "com.system_audio_transcriber.state_queue", qos: .utility)
+    private var _isCapturing = false
+    var isCapturing: Bool {
+        get {
+            return stateQueue.sync { _isCapturing }
+        }
+        set {
+            stateQueue.async { [weak self] in
+                self?._isCapturing = newValue
+            }
+        }
+    }
+    
     private let captureQueue = DispatchQueue(label: "com.system_audio_transcriber.capture_queue", qos: .userInitiated)
 
     static func register(with registrar: FlutterPluginRegistrar) {
@@ -42,6 +116,24 @@ class SystemCapturePlugin: NSObject, FlutterPlugin {
         )
         instance.statusEventChannel = statusEventChannel
         statusEventChannel.setStreamHandler(SystemStatusStreamHandler(plugin: instance))
+        
+        // Register for app termination to cleanup
+        NotificationCenter.default.addObserver(
+            instance,
+            selector: #selector(instance.applicationWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func applicationWillTerminate() {
+        Task {
+            await cleanupResources()
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -53,14 +145,9 @@ class SystemCapturePlugin: NSObject, FlutterPlugin {
             requestPermissions(result: result)
 
         case "startCapture":
-            if let args = call.arguments as? [String: Any] {
-                Task {
-                    await startCapture(config: args, result: result)
-                }
-            } else {
-                Task {
-                    await startCapture(config: nil, result: result)
-                }
+            let config = call.arguments as? [String: Any]
+            Task {
+                await startCapture(config: config, result: result)
             }
 
         case "stopCapture":
@@ -74,7 +161,6 @@ class SystemCapturePlugin: NSObject, FlutterPlugin {
     }
 
     private func requestPermissions(result: @escaping FlutterResult) {
-        // Check if we already have permission
         let hasPermission = CGPreflightScreenCaptureAccess()
 
         if hasPermission {
@@ -82,16 +168,13 @@ class SystemCapturePlugin: NSObject, FlutterPlugin {
             return
         }
 
-        // Request permission - this will show system dialog
-        // Note: This only works ONCE. If user denies, they must go to System Settings manually
         let granted = CGRequestScreenCaptureAccess()
 
         if granted {
             result(true)
         } else {
-            // Permission denied or dialog shown - user needs to go to System Settings
-            DispatchQueue.main.async {
-                self.showPermissionAlert()
+            DispatchQueue.main.async { [weak self] in
+                self?.showPermissionAlert()
             }
             result(false)
         }
@@ -115,225 +198,234 @@ class SystemCapturePlugin: NSObject, FlutterPlugin {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            // Open System Settings to Screen Recording
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                 NSWorkspace.shared.open(url)
             }
         }
     }
 
-    @available(macOS 13.0, *)
     private func startCapture(config: [String: Any]?, result: @escaping FlutterResult) async {
-        // Ensure operations run on capture queue to avoid race conditions
-        await withCheckedContinuation { continuation in
-            captureQueue.async { [weak self] in
-                guard let self = self else {
-                    continuation.resume()
-                    DispatchQueue.main.async { result(false) }
-                    return
-                }
-                
-                continuation.resume()
-                
-                Task {
-                    // Check if already capturing
-                    if self.isCapturing {
-                        print("⚠️ Already capturing, stopping first...")
-                        // Stop first if already capturing
-                        await self.forceStop()
-                        // Wait a bit to ensure cleanup is complete
-                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                    }
-                    
-                    await self.continueStartCapture(config: config, result: result)
-                }
-            }
+        // Check if already capturing
+        if isCapturing {
+            print("⚠️ Already capturing, stopping first...")
+            await cleanupResources()
+            // Wait for cleanup
+            try? await Task.sleep(nanoseconds: 100_000_000)
         }
-    }
-    
-    @available(macOS 13.0, *)
-    private func continueStartCapture(config: [String: Any]?, result: @escaping FlutterResult) async {
-        // Check permission first
-        let hasPermission = CGPreflightScreenCaptureAccess()
-        if !hasPermission {
-            print("❌ No screen recording permission - please grant permission first")
-            DispatchQueue.main.async {
-                self.showPermissionAlert()
+        
+        // Check permission
+        guard CGPreflightScreenCaptureAccess() else {
+            print("❌ No screen recording permission")
+            let errorMessage = CaptureError.noPermission.message
+            DispatchQueue.main.async { [weak self] in
+                self?.showPermissionAlert()
+                result(FlutterError(
+                    code: "NO_PERMISSION",
+                    message: errorMessage,
+                    details: nil
+                ))
             }
-            result(false)
+            return
+        }
+        
+        // Parse and validate configuration
+        let audioConfig: AudioConfiguration
+        switch AudioConfiguration.from(config) {
+        case .success(let cfg):
+            audioConfig = cfg
+        case .failure(let error):
+            DispatchQueue.main.async {
+                result(FlutterError(
+                    code: "INVALID_CONFIG",
+                    message: error.message,
+                    details: nil
+                ))
+            }
             return
         }
         
         do {
-            print("Getting shareable content...")
-            // Get available content (displays and applications)
+            print("🎬 Starting capture with config: \(audioConfig.sampleRate)Hz, \(audioConfig.channelCount)ch")
+            
+            // Get shareable content
             let availableContent = try await SCShareableContent.excludingDesktopWindows(
                 false,
                 onScreenWindowsOnly: true
             )
 
             guard let display = availableContent.displays.first else {
-                print("❌ No display found")
-                result(false)
-                return
+                throw CaptureError.noDisplay
             }
 
-            print("Configuring stream for display: \(display.displayID)")
-            // Configure stream to capture system audio
-            let configuration = SCStreamConfiguration()
-
-            // Parse configuration from Flutter if provided
-            var sampleRate = 16000.0
-            var channelCount = 1
+            print("📺 Display: \(display.displayID)")
             
-            if let config = config {
-                if let sampleRateValue = config["sampleRate"] as? NSNumber {
-                    sampleRate = sampleRateValue.doubleValue
-                }
-                if let channelsValue = config["channels"] as? NSNumber {
-                    channelCount = channelsValue.intValue
-                }
-            }
-
-            // Audio settings
+            // Configure stream
+            let configuration = SCStreamConfiguration()
             configuration.capturesAudio = true
-            configuration.sampleRate = Int(sampleRate)
-            configuration.channelCount = channelCount
-            configuration.excludesCurrentProcessAudio = true // Don't capture our app's audio
+            configuration.sampleRate = Int(audioConfig.sampleRate)
+            configuration.channelCount = audioConfig.channelCount
+            configuration.excludesCurrentProcessAudio = true
 
-            // Video settings - ScreenCaptureKit requires video to be enabled for audio
-            // We set minimal resolution to reduce overhead
+            // Video settings - minimal to reduce overhead
+            // ScreenCaptureKit requires video output even for audio-only capture
             configuration.width = 100
             configuration.height = 100
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1 FPS minimum
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1 FPS
             configuration.queueDepth = 3
-
-            // Pixel format
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
-
-            // Don't show cursor in capture
             configuration.showsCursor = false
 
-            // Create content filter to capture entire display
+            // Create filter and stream
             let filter = SCContentFilter(display: display, excludingWindows: [])
-
-            // Create stream output handler
-            streamOutput = StreamOutput(eventSink: eventSink)
-
-            print("Creating stream...")
-            // Create and start stream
-            stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-
-            guard let stream = stream, let streamOutput = streamOutput else {
-                print("❌ Failed to create stream or stream output")
-                result(false)
-                return
-            }
+            let newStreamOutput = StreamOutput(eventSink: eventSink)
+            let newStream = SCStream(filter: filter, configuration: configuration, delegate: nil)
+            let stream = newStream
             
-            print("Adding stream output...")
-            try stream.addStreamOutput(streamOutput, type: .audio, sampleHandlerQueue: .main)
+            // Add output handlers
+            // Note: macOS 13.x requires both audio and video handlers even if video is minimal
+            try stream.addStreamOutput(newStreamOutput, type: .audio, sampleHandlerQueue: .main)
+            
+            // Only add video handler if not explicitly disabled (macOS 13.x compatibility)
+            if #available(macOS 14.0, *) {
+                // No video handler needed on macOS 14+ when capturesVideo = false
+            } else {
+                try stream.addStreamOutput(newStreamOutput, type: .screen, sampleHandlerQueue: .main)
+            }
 
-            print("Starting capture...")
+            // Start capture
             try await stream.startCapture()
             
-            // Wait a bit to ensure stream has fully started
-            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
-
-            // Update state
-            isCapturing = true
+            // Update state atomically on state queue
+            // Use sync to avoid Sendable capture issues - we're already on async context
+            stateQueue.sync { [weak self] in
+                guard let self = self else { return }
+                self.stream = stream
+                self.streamOutput = newStreamOutput
+                self._isCapturing = true
+            }
             
-            // Send status update
+            // Notify status change
             sendStatusUpdate(isActive: true)
             
-            print("✅ System audio capture started successfully!")
-            result(true)
+            print("✅ Capture started successfully")
+            DispatchQueue.main.async {
+                result(true)
+            }
 
+        } catch let error as CaptureError {
+            print("❌ Capture error: \(error.message)")
+            await cleanupResources()
+            DispatchQueue.main.async {
+                result(FlutterError(
+                    code: "CAPTURE_ERROR",
+                    message: error.message,
+                    details: nil
+                ))
+            }
         } catch {
-            print("❌ Error starting capture: \(error)")
-            if let nsError = error as NSError? {
-                print("Error domain: \(nsError.domain), code: \(nsError.code)")
-                print("Error info: \(nsError.userInfo)")
+            print("❌ Unexpected error: \(error)")
+            await cleanupResources()
+            DispatchQueue.main.async {
+                result(FlutterError(
+                    code: "CAPTURE_ERROR",
+                    message: CaptureError.captureStartFailed(error).message,
+                    details: "\(error)"
+                ))
             }
-            // Clean up on error
-            stream = nil
-            streamOutput = nil
-            isCapturing = false
-            result(false)
         }
     }
 
-    @available(macOS 13.0, *)
     private func stopCapture(result: @escaping FlutterResult) async {
-        await withCheckedContinuation { continuation in
-            captureQueue.async { [weak self] in
-                guard let self = self else {
-                    continuation.resume()
-                    DispatchQueue.main.async { result(false) }
-                    return
-                }
-                
-                continuation.resume()
-                
-                Task {
-                    await self.forceStop()
-                    DispatchQueue.main.async { result(true) }
-                }
-            }
-        }
-    }
-    
-    // Force stop - complete cleanup, can be called from any thread
-    @available(macOS 13.0, *)
-    private func forceStop() async {
         guard isCapturing else {
+            DispatchQueue.main.async {
+                result(FlutterError(
+                    code: "NOT_CAPTURING",
+                    message: CaptureError.notCapturing.message,
+                    details: nil
+                ))
+            }
             return
         }
         
-        guard let stream = stream else {
-            // Clean up state even if stream is nil
-            self.stream = nil
-            self.streamOutput = nil
-            isCapturing = false
+        await cleanupResources()
+        
+        print("✅ Capture stopped")
+        DispatchQueue.main.async {
+            result(true)
+        }
+    }
+    
+    // Centralized cleanup - idempotent and thread-safe
+    private func cleanupResources() async {
+        // Get current stream and output atomically
+        let (currentStream, currentOutput) = await withCheckedContinuation { (continuation: CheckedContinuation<(SCStream?, StreamOutput?), Never>) in
+            stateQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: (nil, nil))
+                    return
+                }
+                continuation.resume(returning: (self.stream, self.streamOutput))
+            }
+        }
+        
+        guard let stream = currentStream else {
+            // Already cleaned up
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                stateQueue.async { [weak self] in
+                    self?._isCapturing = false
+                    continuation.resume()
+                }
+            }
             return
         }
         
         do {
-            // Remove stream output first to prevent frame drops
-            if let streamOutput = streamOutput {
-                try stream.removeStreamOutput(streamOutput, type: .audio)
+            // Remove outputs
+            if let output = currentOutput {
+                try stream.removeStreamOutput(output, type: .audio)
+                
+                // Only remove video handler if it was added (macOS 13.x)
+                if #available(macOS 14.0, *) {
+                    // No video handler to remove
+                } else {
+                    try stream.removeStreamOutput(output, type: .screen)
+                }
             }
 
-            // Stop the stream
+            // Stop stream
             try await stream.stopCapture()
             
-            // Wait a bit to ensure stream has fully stopped
-            try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
+            // Small delay for graceful shutdown
+            try? await Task.sleep(nanoseconds: 50_000_000)
             
         } catch {
-            print("⚠️ Error during stop: \(error.localizedDescription)")
+            print("⚠️ Cleanup error: \(error.localizedDescription)")
         }
         
-        // Clean up state
-        self.stream = nil
-        self.streamOutput = nil
-        isCapturing = false
+        // Clear state atomically
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            stateQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.stream = nil
+                self.streamOutput = nil
+                self._isCapturing = false
+                continuation.resume()
+            }
+        }
         
-        // Send status update
+        // Notify status change
         sendStatusUpdate(isActive: false)
-        
-        print("✅ System audio capture stopped")
     }
     
-    // Send status update to Flutter
     private func sendStatusUpdate(isActive: Bool) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, let sink = self.statusEventSink else { return }
-            
-            let status: [String: Any] = [
-                "isActive": isActive
-            ]
-            
-            sink(status)
+            self?.statusEventSink?([
+                "isActive": isActive,
+                "timestamp": Date().timeIntervalSince1970
+            ])
         }
     }
 }
@@ -356,9 +448,10 @@ extension SystemCapturePlugin: FlutterStreamHandler {
 
 // MARK: - Stream Output Handler
 @available(macOS 13.0, *)
-class StreamOutput: NSObject, SCStreamOutput {
+final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     var eventSink: FlutterEventSink?
     private static var hasLoggedFormat = false
+    private let processingQueue = DispatchQueue(label: "com.system_audio_transcriber.processing", qos: .userInitiated)
 
     init(eventSink: FlutterEventSink?) {
         self.eventSink = eventSink
@@ -366,36 +459,33 @@ class StreamOutput: NSObject, SCStreamOutput {
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        // Only process audio, ignore video frames
         guard type == .audio else { return }
 
-        // Convert CMSampleBuffer to PCM data
-        guard let audioData = extractAudioData(from: sampleBuffer) else {
-            return
-        }
-        
-        // Send audio data to Flutter via event channel on main thread
-        // Check eventSink in closure to ensure thread safety
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let sink = self.eventSink else { return }
-            sink(FlutterStandardTypedData(bytes: audioData))
+        // Process on background queue
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            guard let audioData = self.extractAudioData(from: sampleBuffer) else {
+                return
+            }
+            
+            // Send to Flutter on main thread
+            DispatchQueue.main.async { [weak self] in
+                guard let sink = self?.eventSink else { return }
+                sink(FlutterStandardTypedData(bytes: audioData))
+            }
         }
     }
 
     private func extractAudioData(from sampleBuffer: CMSampleBuffer) -> Data? {
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer),
+              let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
             return nil
         }
 
-        // Get audio format description
-        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-            return nil
-        }
-
-        guard let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
-            return nil
-        }
-
-        // Log audio format (only once)
+        // Log format once
         if !StreamOutput.hasLoggedFormat {
             StreamOutput.hasLoggedFormat = true
             let desc = audioStreamBasicDescription.pointee
@@ -422,31 +512,36 @@ class StreamOutput: NSObject, SCStreamOutput {
             return nil
         }
 
-        // Check if audio is Float32 (common for ScreenCaptureKit)
-        if audioStreamBasicDescription.pointee.mFormatID == kAudioFormatLinearPCM &&
-           audioStreamBasicDescription.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
-            // Convert Float32 to Int16 (LINEAR16)
-            let floatPointer = pointer.withMemoryRebound(to: Float32.self, capacity: length / MemoryLayout<Float32>.size) { $0 }
-            let sampleCount = length / MemoryLayout<Float32>.size
-
-            var int16Data = Data(capacity: sampleCount * MemoryLayout<Int16>.size)
-            for i in 0..<sampleCount {
-                // Clamp to [-1.0, 1.0] and convert to Int16 range [-32768, 32767]
-                let sample = min(max(floatPointer[i], -1.0), 1.0)
-                let int16Sample = Int16(sample * 32767.0)
-                withUnsafeBytes(of: int16Sample) { int16Data.append(contentsOf: $0) }
-            }
-
-            return int16Data
-        } else if audioStreamBasicDescription.pointee.mFormatID == kAudioFormatLinearPCM &&
-                  audioStreamBasicDescription.pointee.mBitsPerChannel == 16 {
-            // Already Int16, return as is
+        let desc = audioStreamBasicDescription.pointee
+        
+        // Float32 to Int16 conversion
+        if desc.mFormatID == kAudioFormatLinearPCM && desc.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            return convertFloat32ToInt16(pointer: pointer, length: length)
+        }
+        
+        // Already Int16
+        if desc.mFormatID == kAudioFormatLinearPCM && desc.mBitsPerChannel == 16 {
             return Data(bytes: pointer, count: length)
         }
 
-        // Unknown format
-        print("⚠️ Unknown audio format: \(audioStreamBasicDescription.pointee.mFormatID)")
+        print("⚠️ Unsupported audio format: \(desc.mFormatID)")
         return nil
+    }
+    
+    private func convertFloat32ToInt16(pointer: UnsafeMutablePointer<Int8>, length: Int) -> Data {
+        let floatPointer = pointer.withMemoryRebound(to: Float32.self, capacity: length / MemoryLayout<Float32>.size) { $0 }
+        let sampleCount = length / MemoryLayout<Float32>.size
+
+        var int16Data = Data(capacity: sampleCount * MemoryLayout<Int16>.size)
+        
+        for i in 0..<sampleCount {
+            // Clamp and convert
+            let sample = min(max(floatPointer[i], -1.0), 1.0)
+            let int16Sample = Int16(sample * 32767.0)
+            withUnsafeBytes(of: int16Sample) { int16Data.append(contentsOf: $0) }
+        }
+
+        return int16Data
     }
 }
 
@@ -463,8 +558,10 @@ class SystemStatusStreamHandler: NSObject, FlutterStreamHandler {
         plugin?.statusEventSink = events
         // Send current status immediately
         let isActive = plugin?.isCapturing ?? false
-        let status: [String: Any] = ["isActive": isActive]
-        events(status)
+        events([
+            "isActive": isActive,
+            "timestamp": Date().timeIntervalSince1970
+        ])
         return nil
     }
     
