@@ -1,15 +1,43 @@
-/// Enum đại diện cho loại thiết bị input
+/// Enum representing the type of input device (microphone).
+/// 
+/// This enum categorizes input devices into three types: built-in, Bluetooth,
+/// or external (USB, etc.).
+/// 
+/// Example:
+/// ```dart
+/// final device = InputDevice(
+///   id: 'device1',
+///   name: 'Built-in Microphone',
+///   type: InputDeviceType.builtIn,
+///   channelCount: 1,
+///   isDefault: true,
+/// );
+/// 
+/// // Convert to/from string
+/// final typeString = device.type.toString(); // 'built-in'
+/// final type = InputDeviceType.fromString('bluetooth'); // InputDeviceType.bluetooth
+/// ```
 enum InputDeviceType {
-  /// Thiết bị tích hợp sẵn (built-in)
+  /// Built-in device (e.g., laptop microphone)
   builtIn,
   
-  /// Thiết bị Bluetooth
+  /// Bluetooth device (wireless microphone)
   bluetooth,
   
-  /// Thiết bị ngoài (external)
+  /// External device (USB microphone, etc.)
   external;
 
-  /// Tạo từ string (từ native code)
+  /// Creates an [InputDeviceType] from a string.
+  /// 
+  /// Accepts: 'built-in', 'bluetooth', 'external' (case-insensitive).
+  /// Returns [InputDeviceType.external] for unknown values.
+  /// 
+  /// Example:
+  /// ```dart
+  /// final type1 = InputDeviceType.fromString('built-in'); // InputDeviceType.builtIn
+  /// final type2 = InputDeviceType.fromString('BLUETOOTH'); // InputDeviceType.bluetooth
+  /// final type3 = InputDeviceType.fromString('unknown'); // InputDeviceType.external (default)
+  /// ```
   static InputDeviceType fromString(String type) {
     switch (type.toLowerCase()) {
       case 'built-in':
@@ -23,7 +51,16 @@ enum InputDeviceType {
     }
   }
 
-  /// Chuyển đổi sang string (để gửi về native code nếu cần)
+  /// Converts this [InputDeviceType] to a string representation.
+  /// 
+  /// Returns: 'built-in', 'bluetooth', or 'external'.
+  /// 
+  /// Example:
+  /// ```dart
+  /// InputDeviceType.builtIn.toString(); // 'built-in'
+  /// InputDeviceType.bluetooth.toString(); // 'bluetooth'
+  /// InputDeviceType.external.toString(); // 'external'
+  /// ```
   @override
   String toString() {
     switch (this) {
@@ -37,24 +74,66 @@ enum InputDeviceType {
   }
 }
 
-/// Class đại diện cho thông tin thiết bị input (microphone)
+/// Class representing information about an input device (microphone).
+/// 
+/// This class contains all relevant information about a microphone device,
+/// including its ID, name, type, channel count, and whether it's the default device.
+/// 
+/// Example:
+/// ```dart
+/// // Get available devices
+/// final devices = await micCapture.getAvailableInputDevices();
+/// 
+/// // Find a specific device
+/// final usbMic = devices.firstWhere(
+///   (device) => device.name.contains('USB'),
+/// );
+/// 
+/// print('Device: ${usbMic.name}');
+/// print('Type: ${usbMic.type}');
+/// print('Channels: ${usbMic.channelCount}');
+/// print('Default: ${usbMic.isDefault}');
+/// 
+/// // Convert to/from map
+/// final map = usbMic.toMap();
+/// final restored = InputDevice.fromMap(map);
+/// ```
 class InputDevice {
-  /// ID duy nhất của thiết bị
+  /// Unique identifier of the device.
+  /// 
+  /// This ID can be used to identify and select a specific device.
   final String id;
 
-  /// Tên thiết bị
+  /// Human-readable name of the device.
+  /// 
+  /// Examples: "Built-in Microphone", "USB Microphone", "AirPods Pro"
   final String name;
 
-  /// Loại thiết bị
+  /// Type of the device (built-in, Bluetooth, or external).
   final InputDeviceType type;
 
-  /// Số lượng kênh audio
+  /// Number of audio channels supported by the device.
+  /// 
+  /// Typically 1 for mono, 2 for stereo.
   final int channelCount;
 
-  /// Có phải thiết bị mặc định không
+  /// Whether this device is the system default input device.
   final bool isDefault;
 
-  /// Constructor
+  /// Creates a new [InputDevice] instance.
+  /// 
+  /// All parameters are required.
+  /// 
+  /// Example:
+  /// ```dart
+  /// final device = InputDevice(
+  ///   id: 'device-123',
+  ///   name: 'Built-in Microphone',
+  ///   type: InputDeviceType.builtIn,
+  ///   channelCount: 1,
+  ///   isDefault: true,
+  /// );
+  /// ```
   const InputDevice({
     required this.id,
     required this.name,
@@ -63,7 +142,26 @@ class InputDevice {
     required this.isDefault,
   });
 
-  /// Tạo từ Map (từ native code)
+  /// Creates an [InputDevice] instance from a map.
+  /// 
+  /// The map should contain:
+  /// - `id`: String (defaults to empty string if missing)
+  /// - `name`: String (defaults to empty string if missing)
+  /// - `type`: String (converted via [InputDeviceType.fromString], defaults to external)
+  /// - `channelCount`: int (defaults to 0 if missing)
+  /// - `isDefault`: bool (defaults to false if missing)
+  /// 
+  /// Example:
+  /// ```dart
+  /// final map = {
+  ///   'id': 'device-123',
+  ///   'name': 'USB Microphone',
+  ///   'type': 'external',
+  ///   'channelCount': 2,
+  ///   'isDefault': false,
+  /// };
+  /// final device = InputDevice.fromMap(map);
+  /// ```
   factory InputDevice.fromMap(Map<String, dynamic> map) {
     return InputDevice(
       id: map['id'] as String? ?? '',
@@ -74,7 +172,26 @@ class InputDevice {
     );
   }
 
-  /// Chuyển đổi sang Map (để gửi về native code nếu cần)
+  /// Converts this [InputDevice] instance to a map.
+  /// 
+  /// Returns a map containing all device information:
+  /// - `id`: String
+  /// - `name`: String
+  /// - `type`: String (from [InputDeviceType.toString])
+  /// - `channelCount`: int
+  /// - `isDefault`: bool
+  /// 
+  /// Example:
+  /// ```dart
+  /// final device = InputDevice(
+  ///   id: 'device-123',
+  ///   name: 'USB Microphone',
+  ///   type: InputDeviceType.external,
+  ///   channelCount: 2,
+  ///   isDefault: false,
+  /// );
+  /// final map = device.toMap();
+  /// ```
   Map<String, dynamic> toMap() {
     return {
       'id': id,

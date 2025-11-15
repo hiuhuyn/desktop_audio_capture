@@ -11,12 +11,78 @@ export 'package:desktop_audio_capture/system/system_audio_capture.dart';
 // Re-export DecibelData from mic_audio_capture (both mic and system use the same class)
 export 'package:desktop_audio_capture/model/decibel_data.dart';
 export 'package:desktop_audio_capture/model/input_device_type.dart';
-export 'package:desktop_audio_capture/model/mic_status.dart';
+export 'package:desktop_audio_capture/model/audio_status.dart';
 
+/// Abstract base class for audio capture functionality.
+/// 
+/// This class defines the common interface for capturing audio from different sources
+/// (microphone or system audio). Implementations include [MicAudioCapture] and
+/// [SystemAudioCapture].
+/// 
+/// Example:
+/// ```dart
+/// final audioCapture = MicAudioCapture();
+/// await audioCapture.initialize();
+/// await audioCapture.startCapture();
+/// 
+/// // Listen to audio stream
+/// audioCapture.audioStream?.listen((audioData) {
+///   // Process audio data
+/// });
+/// 
+/// // Stop when done
+/// await audioCapture.stopCapture();
+/// await audioCapture.dispose();
+/// ```
 abstract class AudioCapture {
+  /// Initializes the audio capture instance.
+  /// 
+  /// This method should be called before starting capture to set up any
+  /// necessary resources.
+  /// 
+  /// Example:
+  /// ```dart
+  /// final capture = MicAudioCapture();
+  /// await capture.initialize();
+  /// ```
   Future<void> initialize();
+
+  /// Whether the audio capture is currently recording.
+  /// 
+  /// Returns `true` if capture is active, `false` otherwise.
+  /// 
+  /// Example:
+  /// ```dart
+  /// if (audioCapture.isRecording) {
+  ///   print('Audio capture is active');
+  /// }
+  /// ```
   bool get isRecording;
+
+  /// Disposes of the audio capture instance and releases all resources.
+  /// 
+  /// This method should be called when the capture instance is no longer needed.
+  /// It will automatically stop any active capture.
+  /// 
+  /// Example:
+  /// ```dart
+  /// await audioCapture.dispose();
+  /// ```
   Future<void> dispose();
 }
 
+/// Abstract base class for audio capture configuration.
+/// 
+/// This class defines the common interface for configuration objects used
+/// to configure audio capture settings. Implementations include [MicAudioConfig]
+/// and [SystemAudioConfig].
+/// 
+/// Example:
+/// ```dart
+/// final config = MicAudioConfig(
+///   sampleRate: 44100,
+///   channels: 2,
+/// );
+/// final capture = MicAudioCapture(config: config);
+/// ```
 abstract class AudioCaptureConfig {}

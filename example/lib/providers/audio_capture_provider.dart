@@ -11,7 +11,7 @@ class AudioCaptureProvider with ChangeNotifier {
   // Mic state
   bool _micActive = false;
   String? _micDeviceName;
-  StreamSubscription<MicStatus>? _micStatusSubscription;
+  StreamSubscription<MicAudioStatus>? _micStatusSubscription;
   StreamSubscription<Uint8List>? _micAudioSubscription; // Keep reference to trigger onListen
   StreamSubscription<DecibelData>? _micDecibelSubscription;
   double _micDecibel = -120.0;
@@ -19,7 +19,7 @@ class AudioCaptureProvider with ChangeNotifier {
 
   // System state
   bool _systemActive = false;
-  StreamSubscription<Map<String, dynamic>>? _systemStatusSubscription;
+  StreamSubscription<SystemAudioStatus>? _systemStatusSubscription;
   StreamSubscription<Uint8List>? _systemAudioSubscription; // Keep reference to trigger onListen
   StreamSubscription<DecibelData>? _systemDecibelSubscription;
   double _systemDecibel = -120.0;
@@ -147,7 +147,7 @@ class AudioCaptureProvider with ChangeNotifier {
         // Setup status listener BEFORE starting capture
         _systemStatusSubscription?.cancel();
         _systemStatusSubscription = _systemCapture.statusStream?.listen((status) {
-          _systemActive = status['isActive'] as bool? ?? false;
+          _systemActive = status.isActive;
           notifyListeners();
         });
 
