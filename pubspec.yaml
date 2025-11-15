@@ -2,6 +2,7 @@ name: desktop_audio_capture
 description: "A new Flutter plugin project."
 version: 0.0.1
 homepage: https://github.com/hiuhuyn/desktop_audio_capture
+license: MIT
 
 plugin:
   platforms:
