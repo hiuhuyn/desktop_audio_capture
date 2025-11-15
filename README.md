@@ -13,11 +13,13 @@ A Flutter plugin for capturing audio on desktop platforms (macOS, Linux, Windows
 
 ## Platform Support
 
-- ✅ macOS (tested)
-- ⚠️ Linux (not yet tested)
-- ⚠️ Windows (not yet tested)
+- ✅ **macOS 13.0+** (Ventura or later) - Fully tested and working
+- ⚠️ **Linux** - Implemented but not yet tested
+- ⚠️ **Windows** - Implemented but not yet tested
 
-> **Note**: Linux and Windows platforms are implemented but have not been tested yet. macOS is fully tested and working.
+> **Note**: 
+> - macOS requires **macOS 13.0 (Ventura) or later** because System Audio Capture uses APIs available from macOS 13.0+
+> - Linux and Windows platforms are implemented but have not been tested yet
 
 ## Screenshots
 
@@ -196,7 +198,9 @@ for (final device in devices) {
 
 ## Permissions
 
-### macOS
+### macOS (13.0+)
+
+**System Requirements**: macOS 13.0 (Ventura) or later is required.
 
 - **Microphone**: Requires microphone access permission in `Info.plist`:
   ```xml
