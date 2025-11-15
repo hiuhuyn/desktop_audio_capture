@@ -7,6 +7,7 @@
 #include <pulse/simple.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -16,6 +17,8 @@ namespace {
 
 constexpr char kMethodChannelName[] = "com.system_audio_transcriber/audio_capture";
 constexpr char kEventChannelName[] = "com.system_audio_transcriber/audio_stream";
+constexpr char kStatusEventChannelName[] = "com.system_audio_transcriber/audio_status";
+constexpr char kDecibelEventChannelName[] = "com.system_audio_transcriber/audio_decibel";
 
 constexpr int kDefaultSampleRate = 16000;
 constexpr int kDefaultChannels = 1;
@@ -25,11 +28,12 @@ constexpr float kDefaultGainBoost = 2.5f;
 constexpr float kDefaultInputVolume = 1.0f;
 
 struct AudioChunkPayload {
-  AudioChunkPayload(AudioCapturePlugin* plugin, GBytes* bytes)
-      : plugin(plugin), bytes(bytes) {}
+  AudioChunkPayload(AudioCapturePlugin* plugin, GBytes* bytes, double decibel)
+      : plugin(plugin), bytes(bytes), decibel(decibel) {}
 
   AudioCapturePlugin* plugin;
   GBytes* bytes;
+  double decibel;
 };
 
 struct CaptureThreadContext {
@@ -45,6 +49,7 @@ struct CaptureThreadContext {
 
 gboolean EmitAudioOnMainThread(gpointer user_data);
 gpointer CaptureThread(gpointer user_data);
+double CalculateDecibel(const int16_t* samples, size_t sample_count);
 
 }  // namespace
 
@@ -53,12 +58,16 @@ struct _AudioCapturePlugin {
 
   FlMethodChannel* method_channel;
   FlEventChannel* event_channel;
+  FlEventChannel* status_event_channel;
+  FlEventChannel* decibel_event_channel;
   GMainContext* main_context;
 
   GMutex lock;
   gint should_stop;
   gboolean is_capturing;
   gboolean has_listener;
+  gboolean has_status_listener;
+  gboolean has_decibel_listener;
 
   GThread* capture_thread;
 };
@@ -149,6 +158,33 @@ void ApplyGainBoostAndConvertToMono(const int16_t* input, int16_t* output,
   }
 }
 
+double CalculateDecibel(const int16_t* samples, size_t sample_count) {
+  if (sample_count == 0) {
+    return -120.0;
+  }
+
+  // Calculate RMS (Root Mean Square)
+  double sum_of_squares = 0.0;
+  for (size_t i = 0; i < sample_count; ++i) {
+    double value = static_cast<double>(samples[i]);
+    sum_of_squares += value * value;
+  }
+  double mean_square = sum_of_squares / static_cast<double>(sample_count);
+  double rms = sqrt(mean_square);
+
+  // Calculate decibel: dB = 20 * log10(RMS / max_value)
+  // For Int16, max_value is 32767.0
+  const double max_value = 32767.0;
+  if (rms <= 0.0) {
+    return -120.0;  // Avoid log(0)
+  }
+
+  double decibel = 20.0 * log10(rms / max_value);
+
+  // Clamp to reasonable range (-120 dB to 0 dB)
+  return std::max(-120.0, std::min(0.0, decibel));
+}
+
 gboolean EmitAudioOnMainThread(gpointer user_data) {
   std::unique_ptr<AudioChunkPayload> payload(
       static_cast<AudioChunkPayload*>(user_data));
@@ -161,6 +197,8 @@ gboolean EmitAudioOnMainThread(gpointer user_data) {
   g_mutex_lock(&plugin->lock);
   const gboolean can_emit =
       plugin->event_channel != nullptr && plugin->has_listener;
+  const gboolean can_emit_decibel =
+      plugin->decibel_event_channel != nullptr && plugin->has_decibel_listener;
   g_mutex_unlock(&plugin->lock);
 
   if (can_emit && length > 0) {
@@ -169,6 +207,19 @@ gboolean EmitAudioOnMainThread(gpointer user_data) {
     
     if (!fl_event_channel_send(plugin->event_channel, value, nullptr, &error)) {
       g_warning("Failed to send audio chunk: %s",
+                error != nullptr ? error->message : "unknown error");
+    }
+  }
+
+  // Send decibel data
+  if (can_emit_decibel) {
+    g_autoptr(FlValue) decibel_map = fl_value_new_map();
+    fl_value_set_string_take(decibel_map, "decibel", fl_value_new_float(payload->decibel));
+    fl_value_set_string_take(decibel_map, "timestamp", fl_value_new_float(g_get_real_time() / 1000000.0));
+    
+    g_autoptr(GError) error = nullptr;
+    if (!fl_event_channel_send(plugin->decibel_event_channel, decibel_map, nullptr, &error)) {
+      g_warning("Failed to send decibel data: %s",
                 error != nullptr ? error->message : "unknown error");
     }
   }
@@ -228,8 +279,12 @@ gpointer CaptureThread(gpointer user_data) {
 
     // Create output bytes (mono)
     const size_t output_bytes = frames_to_process * sizeof(int16_t);
+    
+    // Calculate decibel from output buffer
+    double decibel = CalculateDecibel(output_buffer.data(), frames_to_process);
+    
     GBytes* bytes = g_bytes_new(output_buffer.data(), output_bytes);
-    auto* payload = new AudioChunkPayload(plugin, bytes);
+    auto* payload = new AudioChunkPayload(plugin, bytes, decibel);
     g_object_ref(plugin);
     g_main_context_invoke_full(plugin->main_context, G_PRIORITY_DEFAULT,
                                EmitAudioOnMainThread, payload, nullptr);
@@ -241,6 +296,20 @@ gpointer CaptureThread(gpointer user_data) {
   plugin->is_capturing = FALSE;
   plugin->capture_thread = nullptr;
   g_mutex_unlock(&plugin->lock);
+
+  // Send status update
+  g_mutex_lock(&plugin->lock);
+  const gboolean has_status_listener = plugin->has_status_listener;
+  g_mutex_unlock(&plugin->lock);
+  
+  if (has_status_listener && plugin->status_event_channel != nullptr) {
+    g_autoptr(FlValue) status_map = fl_value_new_map();
+    fl_value_set_string_take(status_map, "isActive", fl_value_new_bool(FALSE));
+    fl_value_set_string_take(status_map, "timestamp", fl_value_new_float(g_get_real_time() / 1000000.0));
+    
+    g_autoptr(GError) error = nullptr;
+    fl_event_channel_send(plugin->status_event_channel, status_map, nullptr, &error);
+  }
 
   g_object_unref(plugin);
   return nullptr;
@@ -270,20 +339,62 @@ static FlMethodErrorResponse* OnCancelHandler(FlEventChannel* channel,
   return nullptr;
 }
 
-bool IsSupported() {
-  pa_simple* stream = nullptr;
-  std::string error_message;
-  const size_t chunk_size =
-      CalculateChunkSize(kDefaultSampleRate, kDefaultChannels,
-                         kDefaultBitsPerSample, kDefaultChunkDurationMs);
-  if (!OpenPulseStream(kDefaultSampleRate, kDefaultChannels,
-                       kDefaultBitsPerSample, chunk_size, &stream,
-                       &error_message)) {
-    g_warning("PulseAudio check failed: %s", error_message.c_str());
-    return false;
-  }
-  pa_simple_free(stream);
-  return true;
+static FlMethodErrorResponse* OnStatusListenHandler(FlEventChannel* channel,
+                                                     FlValue* arguments,
+                                                     gpointer user_data) {
+  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  (void)channel;
+  (void)arguments;
+  g_mutex_lock(&plugin->lock);
+  plugin->has_status_listener = TRUE;
+  const gboolean is_active = plugin->is_capturing;
+  g_mutex_unlock(&plugin->lock);
+
+  // Send current status immediately
+  g_autoptr(FlValue) status_map = fl_value_new_map();
+  fl_value_set_string_take(status_map, "isActive", fl_value_new_bool(is_active));
+  fl_value_set_string_take(status_map, "timestamp", fl_value_new_float(g_get_real_time() / 1000000.0));
+  
+  g_autoptr(GError) error = nullptr;
+  fl_event_channel_send(plugin->status_event_channel, status_map, nullptr, &error);
+  
+  return nullptr;
+}
+
+static FlMethodErrorResponse* OnStatusCancelHandler(FlEventChannel* channel,
+                                                    FlValue* arguments,
+                                                    gpointer user_data) {
+  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  (void)channel;
+  (void)arguments;
+  g_mutex_lock(&plugin->lock);
+  plugin->has_status_listener = FALSE;
+  g_mutex_unlock(&plugin->lock);
+  return nullptr;
+}
+
+static FlMethodErrorResponse* OnDecibelListenHandler(FlEventChannel* channel,
+                                                      FlValue* arguments,
+                                                      gpointer user_data) {
+  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  (void)channel;
+  (void)arguments;
+  g_mutex_lock(&plugin->lock);
+  plugin->has_decibel_listener = TRUE;
+  g_mutex_unlock(&plugin->lock);
+  return nullptr;
+}
+
+static FlMethodErrorResponse* OnDecibelCancelHandler(FlEventChannel* channel,
+                                                      FlValue* arguments,
+                                                      gpointer user_data) {
+  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  (void)channel;
+  (void)arguments;
+  g_mutex_lock(&plugin->lock);
+  plugin->has_decibel_listener = FALSE;
+  g_mutex_unlock(&plugin->lock);
+  return nullptr;
 }
 
 bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
@@ -387,6 +498,20 @@ bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
     return false;
   }
 
+  // Send status update
+  g_mutex_lock(&plugin->lock);
+  const gboolean has_status_listener = plugin->has_status_listener;
+  g_mutex_unlock(&plugin->lock);
+  
+  if (has_status_listener && plugin->status_event_channel != nullptr) {
+    g_autoptr(FlValue) status_map = fl_value_new_map();
+    fl_value_set_string_take(status_map, "isActive", fl_value_new_bool(TRUE));
+    fl_value_set_string_take(status_map, "timestamp", fl_value_new_float(g_get_real_time() / 1000000.0));
+    
+    g_autoptr(GError) error = nullptr;
+    fl_event_channel_send(plugin->status_event_channel, status_map, nullptr, &error);
+  }
+
   return true;
 }
 
@@ -407,7 +532,21 @@ bool StopCapture(AudioCapturePlugin* plugin) {
   g_mutex_lock(&plugin->lock);
   plugin->capture_thread = nullptr;
   plugin->is_capturing = FALSE;
+  const gboolean has_status_listener = plugin->has_status_listener;
   g_mutex_unlock(&plugin->lock);
+
+  // Wait a bit to ensure thread has fully stopped
+  g_usleep(100000);  // 0.1 seconds
+
+  // Send status update
+  if (has_status_listener && plugin->status_event_channel != nullptr) {
+    g_autoptr(FlValue) status_map = fl_value_new_map();
+    fl_value_set_string_take(status_map, "isActive", fl_value_new_bool(FALSE));
+    fl_value_set_string_take(status_map, "timestamp", fl_value_new_float(g_get_real_time() / 1000000.0));
+    
+    g_autoptr(GError) error = nullptr;
+    fl_event_channel_send(plugin->status_event_channel, status_map, nullptr, &error);
+  }
 
   return true;
 }
@@ -416,10 +555,7 @@ void HandleMethodCall(AudioCapturePlugin* plugin, FlMethodCall* method_call) {
   const gchar* method = fl_method_call_get_name(method_call);
   g_autoptr(FlMethodResponse) response = nullptr;
 
-  if (strcmp(method, "isSupported") == 0) {
-    g_autoptr(FlValue) result = fl_value_new_bool(IsSupported());
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
-  } else if (strcmp(method, "requestPermissions") == 0) {
+  if (strcmp(method, "requestPermissions") == 0) {
     g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (strcmp(method, "startCapture") == 0) {
@@ -430,12 +566,6 @@ void HandleMethodCall(AudioCapturePlugin* plugin, FlMethodCall* method_call) {
   } else if (strcmp(method, "stopCapture") == 0) {
     const bool stopped = StopCapture(plugin);
     g_autoptr(FlValue) result = fl_value_new_bool(stopped);
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
-  } else if (strcmp(method, "isCapturing") == 0) {
-    g_mutex_lock(&plugin->lock);
-    const gboolean capturing = plugin->is_capturing;
-    g_mutex_unlock(&plugin->lock);
-    g_autoptr(FlValue) result = fl_value_new_bool(capturing);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
@@ -469,6 +599,14 @@ static void audio_capture_plugin_dispose(GObject* object) {
     g_clear_object(&plugin->event_channel);
   }
 
+  if (plugin->status_event_channel != nullptr) {
+    g_clear_object(&plugin->status_event_channel);
+  }
+
+  if (plugin->decibel_event_channel != nullptr) {
+    g_clear_object(&plugin->decibel_event_channel);
+  }
+
   if (plugin->main_context != nullptr) {
     g_main_context_unref(plugin->main_context);
     plugin->main_context = nullptr;
@@ -489,8 +627,12 @@ static void audio_capture_plugin_init(AudioCapturePlugin* plugin) {
   plugin->main_context = g_main_context_ref_thread_default();
   plugin->is_capturing = FALSE;
   plugin->has_listener = FALSE;
+  plugin->has_status_listener = FALSE;
+  plugin->has_decibel_listener = FALSE;
   plugin->method_channel = nullptr;
   plugin->event_channel = nullptr;
+  plugin->status_event_channel = nullptr;
+  plugin->decibel_event_channel = nullptr;
   plugin->capture_thread = nullptr;
   g_atomic_int_set(&plugin->should_stop, 0);
 }
@@ -521,6 +663,26 @@ void audio_capture_plugin_register_with_messenger(FlBinaryMessenger* messenger) 
       OnListenHandler, 
       OnCancelHandler,
       g_object_ref(plugin), 
+      g_object_unref);
+
+  // Register status event channel
+  plugin->status_event_channel = fl_event_channel_new(
+      messenger, kStatusEventChannelName, FL_METHOD_CODEC(codec));
+  fl_event_channel_set_stream_handlers(
+      plugin->status_event_channel,
+      OnStatusListenHandler,
+      OnStatusCancelHandler,
+      g_object_ref(plugin),
+      g_object_unref);
+
+  // Register decibel event channel
+  plugin->decibel_event_channel = fl_event_channel_new(
+      messenger, kDecibelEventChannelName, FL_METHOD_CODEC(codec));
+  fl_event_channel_set_stream_handlers(
+      plugin->decibel_event_channel,
+      OnDecibelListenHandler,
+      OnDecibelCancelHandler,
+      g_object_ref(plugin),
       g_object_unref);
 
   g_object_unref(plugin);
