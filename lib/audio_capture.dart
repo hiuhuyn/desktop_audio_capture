@@ -35,18 +35,6 @@ export 'package:desktop_audio_capture/model/audio_status.dart';
 /// await audioCapture.dispose();
 /// ```
 abstract class AudioCapture {
-  /// Initializes the audio capture instance.
-  /// 
-  /// This method should be called before starting capture to set up any
-  /// necessary resources.
-  /// 
-  /// Example:
-  /// ```dart
-  /// final capture = MicAudioCapture();
-  /// await capture.initialize();
-  /// ```
-  Future<void> initialize();
-
   /// Whether the audio capture is currently recording.
   /// 
   /// Returns `true` if capture is active, `false` otherwise.

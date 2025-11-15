@@ -211,19 +211,6 @@ class MicAudioCapture extends AudioCapture {
     _config = config;
   }
 
-  /// Initializes the microphone audio capture instance.
-  /// 
-  /// This method is currently a no-op but should be called for consistency
-  /// with the [AudioCapture] interface.
-  /// 
-  /// Example:
-  /// ```dart
-  /// final capture = MicAudioCapture();
-  /// await capture.initialize();
-  /// ```
-  @override
-  Future<void> initialize() async {}
-
   /// Starts capturing audio from the microphone.
   /// 
   /// This method will request necessary permissions (microphone permission)

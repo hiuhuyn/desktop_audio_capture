@@ -181,19 +181,6 @@ class SystemAudioCapture extends AudioCapture {
     _config = config;
   }
 
-  /// Initializes the system audio capture instance.
-  /// 
-  /// This method is currently a no-op but should be called for consistency
-  /// with the [AudioCapture] interface.
-  /// 
-  /// Example:
-  /// ```dart
-  /// final capture = SystemAudioCapture();
-  /// await capture.initialize();
-  /// ```
-  @override
-  Future<void> initialize() async {}
-
   /// Starts capturing system audio.
   /// 
   /// This method will request necessary permissions (screen recording on macOS)
