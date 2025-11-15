@@ -8,6 +8,9 @@
 export 'package:audio_capture/mic/mic_audio_capture.dart';
 export 'package:audio_capture/system/system_audio_capture.dart';
 
+// Re-export DecibelData from mic_audio_capture (both mic and system use the same class)
+export 'package:audio_capture/mic/mic_audio_capture.dart' show DecibelData;
+
 abstract class AudioCapture {
   Future<void> initialize();
   Future<bool> isSupported();

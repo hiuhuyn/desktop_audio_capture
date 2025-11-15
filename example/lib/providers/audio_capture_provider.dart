@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:audio_capture/mic/mic_audio_capture.dart';
+import 'package:audio_capture/audio_capture.dart';
+import 'package:audio_capture/mic/mic_audio_capture.dart' hide DecibelData;
 import 'package:audio_capture/system/system_audio_capture.dart';
 
 class AudioCaptureProvider with ChangeNotifier {
@@ -14,19 +15,25 @@ class AudioCaptureProvider with ChangeNotifier {
   String? _micDeviceName;
   StreamSubscription<MicStatus>? _micStatusSubscription;
   StreamSubscription<Uint8List>? _micAudioSubscription; // Keep reference to trigger onListen
+  StreamSubscription<DecibelData>? _micDecibelSubscription;
+  double _micDecibel = -120.0;
   String? _micError;
 
   // System state
   bool _systemActive = false;
   StreamSubscription<Map<String, dynamic>>? _systemStatusSubscription;
   StreamSubscription<Uint8List>? _systemAudioSubscription; // Keep reference to trigger onListen
+  StreamSubscription<DecibelData>? _systemDecibelSubscription;
+  double _systemDecibel = -120.0;
   String? _systemError;
 
   // Getters
   bool get micActive => _micActive;
   String? get micDeviceName => _micDeviceName;
+  double get micDecibel => _micDecibel;
   String? get micError => _micError;
   bool get systemActive => _systemActive;
+  double get systemDecibel => _systemDecibel;
   String? get systemError => _systemError;
 
   MicAudioCapture get micCapture => _micCapture;
@@ -54,8 +61,11 @@ class AudioCaptureProvider with ChangeNotifier {
         _micStatusSubscription = null;
         _micAudioSubscription?.cancel();
         _micAudioSubscription = null;
+        _micDecibelSubscription?.cancel();
+        _micDecibelSubscription = null;
         _micActive = false;
         _micDeviceName = null;
+        _micDecibel = -120.0;
         notifyListeners();
       } else {
         // Update config if provided
@@ -90,6 +100,22 @@ class AudioCaptureProvider with ChangeNotifier {
             cancelOnError: false,
           );
         }
+        
+        // Subscribe to decibel stream
+        _micDecibelSubscription?.cancel();
+        final micDecibelStream = _micCapture.decibelStream;
+        if (micDecibelStream != null) {
+          _micDecibelSubscription = micDecibelStream.listen(
+            (decibelData) {
+              _micDecibel = decibelData.decibel;
+              notifyListeners();
+            },
+            onError: (_) {
+              // Errors will be handled silently
+            },
+            cancelOnError: false,
+          );
+        }
       }
     } catch (e) {
       _micError = e.toString();
@@ -109,7 +135,10 @@ class AudioCaptureProvider with ChangeNotifier {
         _systemStatusSubscription = null;
         _systemAudioSubscription?.cancel();
         _systemAudioSubscription = null;
+        _systemDecibelSubscription?.cancel();
+        _systemDecibelSubscription = null;
         _systemActive = false;
+        _systemDecibel = -120.0;
         notifyListeners();
       } else {
         // Update config if provided
@@ -140,6 +169,22 @@ class AudioCaptureProvider with ChangeNotifier {
             cancelOnError: false,
           );
         }
+        
+        // Subscribe to decibel stream
+        _systemDecibelSubscription?.cancel();
+        final systemDecibelStream = _systemCapture.decibelStream;
+        if (systemDecibelStream != null) {
+          _systemDecibelSubscription = systemDecibelStream.listen(
+            (decibelData) {
+              _systemDecibel = decibelData.decibel;
+              notifyListeners();
+            },
+            onError: (_) {
+              // Errors will be handled silently
+            },
+            cancelOnError: false,
+          );
+        }
       }
     } catch (e) {
       _systemError = e.toString();
@@ -152,8 +197,10 @@ class AudioCaptureProvider with ChangeNotifier {
   void dispose() {
     _micStatusSubscription?.cancel();
     _micAudioSubscription?.cancel();
+    _micDecibelSubscription?.cancel();
     _systemStatusSubscription?.cancel();
     _systemAudioSubscription?.cancel();
+    _systemDecibelSubscription?.cancel();
     _micCapture.dispose();
     _systemCapture.dispose();
     super.dispose();

@@ -73,9 +73,12 @@ final class SystemCapturePlugin: NSObject, FlutterPlugin, @unchecked Sendable {
     
     private var statusEventChannel: FlutterEventChannel?
     var statusEventSink: FlutterEventSink?  // Changed to var for access from handler
+    
+    private var decibelEventChannel: FlutterEventChannel?
+    var decibelEventSink: FlutterEventSink?
 
     private var stream: SCStream?
-    private var streamOutput: StreamOutput?
+    var streamOutput: StreamOutput? // Internal access for stream handlers
     
     // Thread-safe state management using serial queue
     private let stateQueue = DispatchQueue(label: "com.system_audio_transcriber.state_queue", qos: .utility)
@@ -116,6 +119,13 @@ final class SystemCapturePlugin: NSObject, FlutterPlugin, @unchecked Sendable {
         )
         instance.statusEventChannel = statusEventChannel
         statusEventChannel.setStreamHandler(SystemStatusStreamHandler(plugin: instance))
+        
+        let decibelEventChannel = FlutterEventChannel(
+            name: "com.system_audio_transcriber/audio_decibel",
+            binaryMessenger: registrar.messenger
+        )
+        instance.decibelEventChannel = decibelEventChannel
+        decibelEventChannel.setStreamHandler(SystemDecibelStreamHandler(plugin: instance))
         
         // Register for app termination to cleanup
         NotificationCenter.default.addObserver(
@@ -277,7 +287,7 @@ final class SystemCapturePlugin: NSObject, FlutterPlugin, @unchecked Sendable {
 
             // Create filter and stream
             let filter = SCContentFilter(display: display, excludingWindows: [])
-            let newStreamOutput = StreamOutput(eventSink: eventSink)
+            let newStreamOutput = StreamOutput(eventSink: eventSink, decibelEventSink: decibelEventSink)
             let newStream = SCStream(filter: filter, configuration: configuration, delegate: nil)
             let stream = newStream
             
@@ -450,11 +460,13 @@ extension SystemCapturePlugin: FlutterStreamHandler {
 @available(macOS 13.0, *)
 final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     var eventSink: FlutterEventSink?
+    var decibelEventSink: FlutterEventSink?
     private static var hasLoggedFormat = false
     private let processingQueue = DispatchQueue(label: "com.system_audio_transcriber.processing", qos: .userInitiated)
 
-    init(eventSink: FlutterEventSink?) {
+    init(eventSink: FlutterEventSink?, decibelEventSink: FlutterEventSink? = nil) {
         self.eventSink = eventSink
+        self.decibelEventSink = decibelEventSink
         super.init()
     }
 
@@ -470,10 +482,22 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 return
             }
             
+            // Calculate decibel from audio data
+            let decibel = self.calculateDecibel(from: audioData)
+            
             // Send to Flutter on main thread
             DispatchQueue.main.async { [weak self] in
-                guard let sink = self?.eventSink else { return }
-                sink(FlutterStandardTypedData(bytes: audioData))
+                if let sink = self?.eventSink {
+                    sink(FlutterStandardTypedData(bytes: audioData))
+                }
+                
+                // Send decibel data
+                if let decibelSink = self?.decibelEventSink {
+                    decibelSink([
+                        "decibel": decibel,
+                        "timestamp": Date().timeIntervalSince1970
+                    ])
+                }
             }
         }
     }
@@ -543,6 +567,44 @@ final class StreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
         return int16Data
     }
+    
+    /// Calculate decibel (dB) from Int16 PCM audio data
+    /// Returns RMS-based decibel value, typically ranges from -∞ to 0 dB
+    private func calculateDecibel(from audioData: Data) -> Double {
+        guard audioData.count >= 2 else { return -120.0 } // Silence threshold
+        
+        // Convert Data to Int16 array
+        let sampleCount = audioData.count / MemoryLayout<Int16>.size
+        var samples: [Int16] = []
+        samples.reserveCapacity(sampleCount)
+        
+        audioData.withUnsafeBytes { bytes in
+            let int16Pointer = bytes.bindMemory(to: Int16.self)
+            for i in 0..<sampleCount {
+                samples.append(int16Pointer[i])
+            }
+        }
+        
+        guard !samples.isEmpty else { return -120.0 }
+        
+        // Calculate RMS (Root Mean Square)
+        let sumOfSquares = samples.reduce(0.0) { sum, sample in
+            let value = Double(sample)
+            return sum + (value * value)
+        }
+        let meanSquare = sumOfSquares / Double(samples.count)
+        let rms = sqrt(meanSquare)
+        
+        // Calculate decibel: dB = 20 * log10(RMS / max_value)
+        // For Int16, max_value is 32767.0
+        let maxValue = 32767.0
+        guard rms > 0 else { return -120.0 } // Avoid log(0)
+        
+        let decibel = 20.0 * log10(rms / maxValue)
+        
+        // Clamp to reasonable range (-120 dB to 0 dB)
+        return max(-120.0, min(0.0, decibel))
+    }
 }
 
 // MARK: - System Status Stream Handler
@@ -567,6 +629,29 @@ class SystemStatusStreamHandler: NSObject, FlutterStreamHandler {
     
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         plugin?.statusEventSink = nil
+        return nil
+    }
+}
+
+// MARK: - System Decibel Stream Handler
+@available(macOS 13.0, *)
+class SystemDecibelStreamHandler: NSObject, FlutterStreamHandler {
+    weak var plugin: SystemCapturePlugin?
+    
+    init(plugin: SystemCapturePlugin) {
+        self.plugin = plugin
+    }
+    
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        plugin?.decibelEventSink = events
+        // Update StreamOutput with decibel sink
+        plugin?.streamOutput?.decibelEventSink = events
+        return nil
+    }
+    
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        plugin?.decibelEventSink = nil
+        plugin?.streamOutput?.decibelEventSink = nil
         return nil
     }
 }

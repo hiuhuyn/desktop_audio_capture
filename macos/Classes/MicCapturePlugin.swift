@@ -11,6 +11,9 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
     private var statusEventChannel: FlutterEventChannel?
     var statusEventSink: FlutterEventSink?
     
+    private var decibelEventChannel: FlutterEventChannel?
+    var decibelEventSink: FlutterEventSink?
+    
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
     var isCapturing = false
@@ -29,6 +32,10 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
     
     // Input volume (default: 1.0)
     private var inputVolume: Float = 1.0
+    
+    // Debug counters for logging
+    private var decibelLogCount = 0
+    private var audioDataLogCount = 0
     
     static func register(with registrar: FlutterPluginRegistrar) {
         let instance = MicCapturePlugin()
@@ -53,6 +60,13 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
         )
         instance.statusEventChannel = statusEventChannel
         statusEventChannel.setStreamHandler(StatusStreamHandler(plugin: instance))
+        
+        let decibelEventChannel = FlutterEventChannel(
+            name: "com.mic_audio_transcriber/mic_decibel",
+            binaryMessenger: registrar.messenger
+        )
+        instance.decibelEventChannel = decibelEventChannel
+        decibelEventChannel.setStreamHandler(MicDecibelStreamHandler(plugin: instance))
     }
     
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -419,6 +433,7 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
             Thread.sleep(forTimeInterval: initialWait)
             
             // Set input volume from config
+            // Note: input.volume affects the input level, but system input volume also matters
             input.volume = self.inputVolume
             print("🎤 Input Format:")
             print("  Sample Rate: \(inputFormat.sampleRate) Hz")
@@ -429,6 +444,58 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
             print("  Output Channels: \(self.channels)")
             print("  Gain Boost: \(self.gainBoost)x")
             print("  Input Volume: \(self.inputVolume)")
+            print("  Input Node Volume: \(input.volume)")
+            
+            // Check system input volume using CoreAudio
+            // Get default input device
+            var defaultDeviceID: AudioDeviceID = 0
+            var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+            var propertyAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            
+            let status = AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject),
+                &propertyAddress,
+                0,
+                nil,
+                &propertySize,
+                &defaultDeviceID
+            )
+            
+            if status == noErr && defaultDeviceID != 0 {
+                // Get input volume
+                var inputVolume: Float32 = 0.0
+                propertySize = UInt32(MemoryLayout<Float32>.size)
+                propertyAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                    mScope: kAudioDevicePropertyScopeInput,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                
+                let getStatus = AudioObjectGetPropertyData(
+                    defaultDeviceID,
+                    &propertyAddress,
+                    0,
+                    nil,
+                    &propertySize,
+                    &inputVolume
+                )
+                
+                if getStatus == noErr {
+                    print("  System Input Volume: \(inputVolume)")
+                    if inputVolume == 0.0 {
+                        print("⚠️ WARNING: System input volume is 0! Audio may be silent.")
+                        print("⚠️ Please check System Settings > Sound > Input and increase input volume.")
+                    }
+                } else {
+                    print("  System Input Volume: Unable to read (may not be supported on this device)")
+                }
+            } else {
+                print("  System Input Volume: Unable to get default input device")
+            }
             
             // Create output format
             guard let outputFormat = AVAudioFormat(
@@ -775,14 +842,58 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
     }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, outputFormat: AVAudioFormat) {
+        // Calculate decibel directly from original buffer (Float32) for accuracy
+        // This avoids potential data loss during conversion
+        let decibel = calculateDecibelFromFloatBuffer(buffer)
+        
+        // Debug: Check original buffer
+        audioDataLogCount += 1
+        if audioDataLogCount % 100 == 0 {
+            print("🔊 Original buffer: frameLength=\(buffer.frameLength), format=\(buffer.format), channels=\(buffer.format.channelCount)")
+            if let floatChannelData = buffer.floatChannelData {
+                let channel = floatChannelData.pointee
+                let firstFew = (0..<min(5, Int(buffer.frameLength))).map { channel[$0] }
+                print("🔊 Original buffer first few float samples: \(firstFew)")
+            }
+            if let int16ChannelData = buffer.int16ChannelData {
+                let channel = int16ChannelData.pointee
+                let firstFew = (0..<min(5, Int(buffer.frameLength))).map { channel[$0] }
+                print("🔊 Original buffer first few int16 samples: \(firstFew)")
+            }
+            print("🔊 Decibel from original buffer: \(String(format: "%.1f", decibel)) dB")
+        }
+        
         // Convert buffer to target format if needed
         guard let convertedBuffer = convertBuffer(buffer, to: outputFormat) else {
+            print("⚠️ Decibel: Failed to convert buffer")
             return
+        }
+        
+        // Debug: Check converted buffer
+        if audioDataLogCount % 100 == 0 {
+            print("🔊 Converted buffer: frameLength=\(convertedBuffer.frameLength), format=\(convertedBuffer.format)")
+            if let int16ChannelData = convertedBuffer.int16ChannelData {
+                let channel = int16ChannelData.pointee
+                let firstFew = (0..<min(5, Int(convertedBuffer.frameLength))).map { channel[$0] }
+                print("🔊 Converted buffer first few int16 samples: \(firstFew)")
+            }
         }
         
         // Extract PCM data
         guard let audioData = extractPCMData(from: convertedBuffer) else {
+            print("⚠️ Decibel: Failed to extract PCM data")
             return
+        }
+        
+        // Debug: log audio data size
+        if audioDataLogCount % 100 == 0 {
+            print("🔊 Final audio data size: \(audioData.count) bytes")
+        }
+        
+        // Debug log occasionally
+        decibelLogCount += 1
+        if decibelLogCount % 100 == 0 {
+            print("🔊 Decibel calculated: \(String(format: "%.1f", decibel)) dB, audioData size: \(audioData.count) bytes")
         }
         
         // Send to Flutter via event channel on main thread
@@ -795,6 +906,14 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
             } else {
                 // Log warning if eventSink is not set (stream not subscribed)
                 print("⚠️ Audio data received but eventSink is nil - stream may not be subscribed")
+            }
+            
+            // Send decibel data
+            if let decibelSink = self.decibelEventSink {
+                decibelSink([
+                    "decibel": decibel,
+                    "timestamp": Date().timeIntervalSince1970
+                ])
             }
         }
     }
@@ -837,11 +956,19 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
     
     private func extractPCMData(from buffer: AVAudioPCMBuffer) -> Data? {
         guard let int16ChannelData = buffer.int16ChannelData else {
+            print("⚠️ Decibel: int16ChannelData is nil")
             return nil
         }
         
         let frameLength = Int(buffer.frameLength)
         let channelCount = Int(buffer.format.channelCount)
+        
+        // Debug: Check if buffer has data
+        if audioDataLogCount % 100 == 0 {
+            let channel = int16ChannelData.pointee
+            let maxSample = (0..<frameLength).map { abs(channel[$0]) }.max() ?? 0
+            print("🔊 Extract PCM: frameLength=\(frameLength), channels=\(channelCount), maxSample=\(maxSample)")
+        }
         
         // Apply gain boost and convert to mono if needed
         var monoData = Data(capacity: frameLength * MemoryLayout<Int16>.size)
@@ -875,7 +1002,113 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
             }
         }
         
+        // Debug: Check extracted data
+        if audioDataLogCount % 100 == 0 {
+            let firstFewBytes = monoData.prefix(10).map { Int8(bitPattern: $0) }
+            print("🔊 Extracted data first few bytes: \(firstFewBytes)")
+        }
+        
         return monoData
+    }
+    
+    /// Calculate decibel (dB) directly from Float32 buffer
+    /// Returns RMS-based decibel value, typically ranges from -∞ to 0 dB
+    private func calculateDecibelFromFloatBuffer(_ buffer: AVAudioPCMBuffer) -> Double {
+        guard let floatChannelData = buffer.floatChannelData else {
+            return -120.0
+        }
+        
+        let frameLength = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        guard frameLength > 0 else { return -120.0 }
+        
+        // Calculate RMS from all channels
+        var sumOfSquares: Double = 0.0
+        var sampleCount = 0
+        
+        if channelCount == 1 {
+            let channel = floatChannelData.pointee
+            for i in 0..<frameLength {
+                let value = Double(channel[i])
+                sumOfSquares += value * value
+                sampleCount += 1
+            }
+        } else {
+            // Multi-channel: use average of all channels
+            for channelIndex in 0..<channelCount {
+                let channel = floatChannelData.advanced(by: channelIndex).pointee
+                for i in 0..<frameLength {
+                    let value = Double(channel[i])
+                    sumOfSquares += value * value
+                    sampleCount += 1
+                }
+            }
+            // Average across channels
+            sumOfSquares /= Double(channelCount)
+        }
+        
+        guard sampleCount > 0 else { return -120.0 }
+        
+        let meanSquare = sumOfSquares / Double(sampleCount)
+        let rms = sqrt(meanSquare)
+        
+        // Calculate decibel: dB = 20 * log10(RMS / max_value)
+        // For Float32, max_value is 1.0
+        guard rms > 0 else { return -120.0 } // Avoid log(0)
+        
+        let decibel = 20.0 * log10(rms)
+        
+        // Clamp to reasonable range (-120 dB to 0 dB)
+        return max(-120.0, min(0.0, decibel))
+    }
+    
+    /// Calculate decibel (dB) from Int16 PCM audio data
+    /// Returns RMS-based decibel value, typically ranges from -∞ to 0 dB
+    private func calculateDecibel(from audioData: Data) -> Double {
+        guard audioData.count >= 2 else {
+            print("⚠️ Decibel: audioData too small: \(audioData.count) bytes")
+            return -120.0 // Silence threshold
+        }
+        
+        // Convert Data to Int16 array
+        let sampleCount = audioData.count / MemoryLayout<Int16>.size
+        var samples: [Int16] = []
+        samples.reserveCapacity(sampleCount)
+        
+        audioData.withUnsafeBytes { bytes in
+            let int16Pointer = bytes.bindMemory(to: Int16.self)
+            for i in 0..<sampleCount {
+                samples.append(int16Pointer[i])
+            }
+        }
+        
+        guard !samples.isEmpty else {
+            print("⚠️ Decibel: no samples extracted")
+            return -120.0
+        }
+        
+        // Calculate RMS (Root Mean Square)
+        let sumOfSquares = samples.reduce(0.0) { sum, sample in
+            let value = Double(sample)
+            return sum + (value * value)
+        }
+        let meanSquare = sumOfSquares / Double(samples.count)
+        let rms = sqrt(meanSquare)
+        
+        // Calculate decibel: dB = 20 * log10(RMS / max_value)
+        // For Int16, max_value is 32767.0
+        let maxValue = 32767.0
+        guard rms > 0 else {
+            print("⚠️ Decibel: RMS is 0, all samples are silent. Sample count: \(samples.count), first few: \(samples.prefix(5))")
+            return -120.0 // Avoid log(0)
+        }
+        
+        let decibel = 20.0 * log10(rms / maxValue)
+        
+        // Clamp to reasonable range (-120 dB to 0 dB)
+        let clampedDecibel = max(-120.0, min(0.0, decibel))
+        
+        return clampedDecibel
     }
 }
 
@@ -917,6 +1150,25 @@ class StatusStreamHandler: NSObject, FlutterStreamHandler {
     
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         plugin?.statusEventSink = nil
+        return nil
+    }
+}
+
+// MARK: - Mic Decibel Stream Handler
+class MicDecibelStreamHandler: NSObject, FlutterStreamHandler {
+    weak var plugin: MicCapturePlugin?
+    
+    init(plugin: MicCapturePlugin) {
+        self.plugin = plugin
+    }
+    
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        plugin?.decibelEventSink = events
+        return nil
+    }
+    
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        plugin?.decibelEventSink = nil
         return nil
     }
 }

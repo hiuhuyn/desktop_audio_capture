@@ -5,6 +5,7 @@ import 'package:audio_capture/config/system_adudio_config.dart';
 import 'package:flutter/services.dart';
 
 export 'package:audio_capture/config/system_adudio_config.dart';
+// DecibelData is exported from audio_capture.dart
 
 enum _SystemAudioMethod {
   isSupported,
@@ -23,9 +24,13 @@ class SystemAudioCapture extends AudioCapture {
   static const EventChannel _statusStreamChannel = EventChannel(
     'com.system_audio_transcriber/audio_status',
   );
+  static const EventChannel _decibelStreamChannel = EventChannel(
+    'com.system_audio_transcriber/audio_decibel',
+  );
 
   Stream<Uint8List>? _audioStream;
   Stream<Map<String, dynamic>>? _statusStream;
+  Stream<DecibelData>? _decibelStream;
   bool _isRecording = false;
 
   Stream<Uint8List>? get audioStream => _audioStream;
@@ -44,6 +49,26 @@ class SystemAudioCapture extends AudioCapture {
       return <String, dynamic>{'isActive': false};
     });
     return _statusStream;
+  }
+
+  /// Stream of system audio decibel (dB) readings
+  /// Returns [DecibelData] containing:
+  /// - `decibel`: double - decibel value (-120 to 0 dB)
+  /// - `timestamp`: double - Unix timestamp
+  Stream<DecibelData>? get decibelStream {
+    if (!_isRecording) {
+      return null;
+    }
+    // Create decibel stream if not already created
+    _decibelStream ??= _decibelStreamChannel.receiveBroadcastStream().map((
+      dynamic event,
+    ) {
+      if (event is Map) {
+        return DecibelData.fromMap(Map<String, dynamic>.from(event));
+      }
+      return DecibelData(decibel: -120.0, timestamp: DateTime.now().millisecondsSinceEpoch / 1000.0);
+    });
+    return _decibelStream;
   }
 
   SystemAudioConfig _config = SystemAudioConfig();
@@ -115,6 +140,7 @@ class SystemAudioCapture extends AudioCapture {
       _isRecording = false;
       _audioStream = null;
       _statusStream = null;
+      _decibelStream = null;
     } catch (e) {
       rethrow;
     }

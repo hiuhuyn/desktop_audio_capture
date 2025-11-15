@@ -4,6 +4,7 @@ import 'package:audio_capture/mic/mic_audio_capture.dart';
 import 'providers/audio_capture_provider.dart';
 import 'providers/settings_provider.dart';
 import 'widgets/audio_data_display.dart';
+import 'widgets/decibel_display.dart';
 
 void main() {
   runApp(const MyApp());
@@ -244,6 +245,13 @@ class AudioCaptureHome extends StatelessWidget {
                     ),
                   ),
                 ),
+                // Mic Decibel Display
+                const SizedBox(height: 8),
+                DecibelDisplay(
+                  decibel: provider.micDecibel,
+                  label: 'Microphone Decibel',
+                  isActive: provider.micActive,
+                ),
                 // Mic Audio Data Display
                 if (provider.micActive) ...[
                   const SizedBox(height: 8),
@@ -296,6 +304,13 @@ class AudioCaptureHome extends StatelessWidget {
                       ],
                     ),
                   ),
+                ),
+                // System Decibel Display
+                const SizedBox(height: 8),
+                DecibelDisplay(
+                  decibel: provider.systemDecibel,
+                  label: 'System Audio Decibel',
+                  isActive: provider.systemActive,
                 ),
                 // System Audio Data Display
                 if (provider.systemActive) ...[
