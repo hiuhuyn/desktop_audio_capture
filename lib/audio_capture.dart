@@ -46,17 +46,6 @@ abstract class AudioCapture {
   /// }
   /// ```
   bool get isRecording;
-
-  /// Disposes of the audio capture instance and releases all resources.
-  /// 
-  /// This method should be called when the capture instance is no longer needed.
-  /// It will automatically stop any active capture.
-  /// 
-  /// Example:
-  /// ```dart
-  /// await audioCapture.dispose();
-  /// ```
-  Future<void> dispose();
 }
 
 /// Abstract base class for audio capture configuration.

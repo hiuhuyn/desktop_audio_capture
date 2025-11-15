@@ -455,19 +455,4 @@ class MicAudioCapture extends AudioCapture {
       rethrow;
     }
   }
-
-  /// Disposes of the microphone audio capture instance and releases all resources.
-  /// 
-  /// This method will automatically stop any active capture and close all streams.
-  /// Should be called when the instance is no longer needed.
-  /// 
-  /// Example:
-  /// ```dart
-  /// await micCapture.dispose();
-  /// ```
-  @override
-  Future<void> dispose() {
-    // TODO: implement dispose
-    throw UnimplementedError();
-  }
 }

@@ -331,18 +331,4 @@ class SystemAudioCapture extends AudioCapture {
     }
     return true;
   }
-
-  /// Disposes of the system audio capture instance and releases all resources.
-  /// 
-  /// This method will automatically stop any active capture and close all streams.
-  /// Should be called when the instance is no longer needed.
-  /// 
-  /// Example:
-  /// ```dart
-  /// await systemCapture.dispose();
-  /// ```
-  @override
-  Future<void> dispose() async {
-    await stopCapture();
-  }
 }

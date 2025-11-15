@@ -199,8 +199,8 @@ class AudioCaptureProvider with ChangeNotifier {
     _systemStatusSubscription?.cancel();
     _systemAudioSubscription?.cancel();
     _systemDecibelSubscription?.cancel();
-    _micCapture.dispose();
-    _systemCapture.dispose();
+    _micCapture.stopCapture();
+    _systemCapture.stopCapture();
     super.dispose();
   }
 }
