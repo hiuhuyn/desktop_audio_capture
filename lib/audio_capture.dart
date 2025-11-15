@@ -13,7 +13,7 @@ export 'package:audio_capture/mic/mic_audio_capture.dart' show DecibelData;
 
 abstract class AudioCapture {
   Future<void> initialize();
-  Future<bool> isSupported();
+  bool get isRecording;
   Future<void> dispose();
 }
 

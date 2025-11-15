@@ -35,7 +35,6 @@ class DecibelData {
 }
 
 enum _MicAudioMethod {
-  isSupported,
   startCapture,
   stopCapture,
   requestPermissions,
@@ -201,22 +200,8 @@ class MicAudioCapture extends AudioCapture {
     }
   } 
 
-  Future<bool> isCapturing() async {
-    return _isRecording;
-  }
-
   @override
-  Future<bool> isSupported() async {
-    try {
-      final isSupport = await _channel.invokeMethod<bool>(
-        _MicAudioMethod.isSupported.name,
-      );
-
-      return isSupport ?? false;
-    } catch (e) {
-      rethrow;
-    }
-  }
+  bool get isRecording => _isRecording;
 
   Future<bool> requestPermissions() async {
     final hasPermission = await _channel.invokeMethod<bool>(

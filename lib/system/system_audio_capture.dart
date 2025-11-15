@@ -1,14 +1,12 @@
 import 'dart:async';
 
 import 'package:audio_capture/audio_capture.dart';
-import 'package:audio_capture/config/system_adudio_config.dart';
 import 'package:flutter/services.dart';
 
 export 'package:audio_capture/config/system_adudio_config.dart';
 // DecibelData is exported from audio_capture.dart
 
 enum _SystemAudioMethod {
-  isSupported,
   startCapture,
   stopCapture,
   requestPermissions,
@@ -146,22 +144,8 @@ class SystemAudioCapture extends AudioCapture {
     }
   }
 
-  Future<bool> isCapturing() async {
-    return _isRecording;
-  }
-
   @override
-  Future<bool> isSupported() async {
-    try {
-      final isSupport = await _channel.invokeMethod<bool>(
-        _SystemAudioMethod.isSupported.name,
-      );
-
-      return isSupport ?? false;
-    } catch (e) {
-      rethrow;
-    }
-  }
+  bool get isRecording => _isRecording;
 
   Future<bool> requestPermissions() async {
     final hasPermission = await _channel.invokeMethod<bool>(

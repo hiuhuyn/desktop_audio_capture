@@ -71,8 +71,6 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
     
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
-        case "isSupported":
-            result(true)
             
         case "requestPermissions":
             requestPermissions(result: result)
