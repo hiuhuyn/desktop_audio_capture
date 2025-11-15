@@ -8,20 +8,14 @@ class SystemAudioCapture extends AudioCapture {
     throw UnimplementedError();
   }
 
-  @override
-  Future<void> startCapture({AudioCaptureConfig? config}) async {
-    if (config is SystemAudioConfig) {
-      return startCapture(config: config);
-    }
+  Future<void> startCapture({SystemAudioConfig? config}) async {
     throw UnimplementedError();
   }
 
-  @override
   Future<void> stopCapture() async {
     throw UnimplementedError();
   }
 
-  @override
   Future<bool> isCapturing() async {
     return false;
   }
@@ -31,11 +25,6 @@ class SystemAudioCapture extends AudioCapture {
     return true;
   }
 
-  @override
-  Future<bool> requestPermissions() async {
-    return true;
-  }
-  
   @override
   Future<void> dispose() {
     // TODO: implement dispose

@@ -10,11 +10,7 @@ export 'package:audio_capture/system/system_audio_capture.dart';
 
 abstract class AudioCapture {
   Future<void> initialize();
-  Future<void> startCapture({AudioCaptureConfig? config});
-  Future<void> stopCapture();
   Future<bool> isSupported();
-  Future<bool> requestPermissions();
-  Future<bool> isCapturing();
   Future<void> dispose();
 }
 

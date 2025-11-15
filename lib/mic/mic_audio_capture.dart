@@ -37,14 +37,13 @@ class MicAudioCapture extends AudioCapture {
   @override
   Future<void> initialize() async {}
 
-  @override
-  Future<void> startCapture({AudioCaptureConfig? config}) async {
+  Future<void> startCapture({MicAudioConfig? config}) async {
     if (_isRecording) {
       return;
     }
 
-    if (config is MicAudioConfig) {
-      _config = config;
+    if (config != null) {
+      updateConfig(config);
     }
 
     try {
@@ -77,7 +76,6 @@ class MicAudioCapture extends AudioCapture {
     }
   }
 
-  @override
   Future<void> stopCapture() async {
     if (!_isRecording) return;
 
@@ -97,7 +95,6 @@ class MicAudioCapture extends AudioCapture {
     }
   }
 
-  @override
   Future<bool> isCapturing() async {
     return _isRecording;
   }
@@ -115,7 +112,6 @@ class MicAudioCapture extends AudioCapture {
     }
   }
 
-  @override
   Future<bool> requestPermissions() async {
     final hasPermission = await _channel.invokeMethod<bool>(
       _MicAudioMethod.requestPermissions.name,
