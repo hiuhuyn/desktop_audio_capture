@@ -9,6 +9,8 @@ plugin:
       pluginClass: AudioCapturePlugin
     macos:
       pluginClass: AudioCapturePlugin
+    windows:
+      pluginClass: AudioCapturePlugin
 
 
 
@@ -46,6 +48,8 @@ flutter:
       linux:
         pluginClass: AudioCapturePlugin
       macos:
+        pluginClass: AudioCapturePlugin
+      windows:
         pluginClass: AudioCapturePlugin
 
   # To add assets to your plugin package, add an assets section, like this:

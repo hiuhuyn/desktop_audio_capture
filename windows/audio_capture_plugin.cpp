@@ -13,6 +13,9 @@
 #include <memory>
 #include <sstream>
 
+#include "system_audio_capture_plugin.h"
+#include "mic_capture_plugin.h"
+
 namespace audio_capture {
 
 // static
@@ -31,6 +34,12 @@ void AudioCapturePlugin::RegisterWithRegistrar(
       });
 
   registrar->AddPlugin(std::move(plugin));
+
+  // Register system audio capture plugin
+  SystemAudioCapturePlugin::RegisterWithRegistrar(registrar);
+
+  // Register microphone capture plugin
+  MicCapturePlugin::RegisterWithRegistrar(registrar);
 }
 
 AudioCapturePlugin::AudioCapturePlugin() {}

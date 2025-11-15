@@ -20,6 +20,10 @@ set(PLUGIN_NAME "audio_capture_plugin")
 list(APPEND PLUGIN_SOURCES
   "audio_capture_plugin.cpp"
   "audio_capture_plugin.h"
+  "system_audio_capture_plugin.cpp"
+  "system_audio_capture_plugin.h"
+  "mic_capture_plugin.cpp"
+  "mic_capture_plugin.h"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
