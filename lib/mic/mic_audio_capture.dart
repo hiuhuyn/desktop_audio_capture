@@ -9,6 +9,8 @@ enum _MicAudioMethod {
   startCapture,
   stopCapture,
   requestPermissions,
+  hasInputDevice,
+  getAvailableInputDevices,
 }
 
 class MicAudioCapture extends AudioCapture {
@@ -173,6 +175,49 @@ class MicAudioCapture extends AudioCapture {
       throw Exception('Microphone permission not granted');
     }
     return true;
+  }
+
+  /// Kiểm tra xem có thiết bị input (microphone) nào khả dụng không
+  /// 
+  /// Returns `true` nếu có ít nhất một thiết bị input khả dụng, `false` nếu không có
+  Future<bool> hasInputDevice() async {
+    try {
+      final hasDevice = await _channel.invokeMethod<bool>(
+        _MicAudioMethod.hasInputDevice.name,
+      );
+      return hasDevice ?? false;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// Lấy danh sách tất cả các thiết bị input (microphone) khả dụng
+  /// 
+  /// Returns một danh sách các Map chứa thông tin thiết bị:
+  /// - `id`: String - ID của thiết bị
+  /// - `name`: String - Tên thiết bị
+  /// - `type`: String - Loại thiết bị ("built-in", "bluetooth", hoặc "external")
+  /// - `channelCount`: int - Số lượng kênh audio
+  /// - `isDefault`: bool - Có phải thiết bị mặc định không
+  Future<List<Map<String, dynamic>>> getAvailableInputDevices() async {
+    try {
+      final devices = await _channel.invokeMethod<List<dynamic>>(
+        _MicAudioMethod.getAvailableInputDevices.name,
+      );
+      
+      if (devices == null) {
+        return [];
+      }
+      
+      return devices.map((device) {
+        if (device is Map) {
+          return Map<String, dynamic>.from(device);
+        }
+        return <String, dynamic>{};
+      }).toList();
+    } catch (e) {
+      rethrow;
+    }
   }
 
   @override

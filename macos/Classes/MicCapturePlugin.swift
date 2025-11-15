@@ -63,6 +63,12 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
         case "requestPermissions":
             requestPermissions(result: result)
             
+        case "hasInputDevice":
+            hasInputDevice(result: result)
+            
+        case "getAvailableInputDevices":
+            getAvailableInputDevices(result: result)
+            
         case "startCapture":
             if let args = call.arguments as? [String: Any] {
                 startCapture(config: args, result: result)
@@ -97,6 +103,219 @@ class MicCapturePlugin: NSObject, FlutterPlugin {
         @unknown default:
             result(false)
         }
+    }
+    
+    private func hasInputDevice(result: @escaping FlutterResult) {
+        // Check if there's any input device available
+        var deviceID: AudioDeviceID = 0
+        var propertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &deviceID
+        )
+        
+        // If status is not OK or deviceID is invalid (kAudioDeviceUnknown = 0)
+        if status != noErr || deviceID == kAudioObjectUnknown {
+            print("❌ No input device available")
+            result(false)
+            return
+        }
+        
+        // Double check: try to get device name to ensure it's a real device
+        propertyAddress.mSelector = kAudioDevicePropertyDeviceNameCFString
+        propertySize = UInt32(MemoryLayout<CFString>.size)
+        var deviceNameCFString: Unmanaged<CFString>?
+        
+        let nameStatus = AudioObjectGetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &deviceNameCFString
+        )
+        
+        if nameStatus == noErr, let cfString = deviceNameCFString?.takeRetainedValue() {
+            let deviceName = cfString as String
+            print("✅ Input device available: \(deviceName)")
+            result(true)
+        } else {
+            print("❌ No valid input device found")
+            result(false)
+        }
+    }
+    
+    private func getAvailableInputDevices(result: @escaping FlutterResult) {
+        var devices: [[String: Any]] = []
+        
+        // Get all audio devices
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        var propertySize: UInt32 = 0
+        var status = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize
+        )
+        
+        guard status == noErr else {
+            print("❌ Failed to get audio devices size")
+            result(devices)
+            return
+        }
+        
+        let deviceCount = Int(propertySize) / MemoryLayout<AudioDeviceID>.size
+        var audioDevices = [AudioDeviceID](repeating: 0, count: deviceCount)
+        
+        status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0,
+            nil,
+            &propertySize,
+            &audioDevices
+        )
+        
+        guard status == noErr else {
+            print("❌ Failed to get audio devices")
+            result(devices)
+            return
+        }
+        
+        // Get default input device for comparison
+        var defaultDeviceID: AudioDeviceID = 0
+        var defaultPropertySize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var defaultPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &defaultPropertyAddress,
+            0,
+            nil,
+            &defaultPropertySize,
+            &defaultDeviceID
+        )
+        
+        // Filter for input devices
+        for deviceID in audioDevices {
+            // Check if device has input channels
+            propertyAddress.mSelector = kAudioDevicePropertyStreamConfiguration
+            propertyAddress.mScope = kAudioDevicePropertyScopeInput
+            propertySize = 0
+            
+            status = AudioObjectGetPropertyDataSize(
+                deviceID,
+                &propertyAddress,
+                0,
+                nil,
+                &propertySize
+            )
+            
+            guard status == noErr else { continue }
+            
+            let bufferListPointer = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
+            defer { bufferListPointer.deallocate() }
+            
+            status = AudioObjectGetPropertyData(
+                deviceID,
+                &propertyAddress,
+                0,
+                nil,
+                &propertySize,
+                bufferListPointer
+            )
+            
+            guard status == noErr else { continue }
+            
+            let bufferList = UnsafeMutableAudioBufferListPointer(bufferListPointer)
+            var channelCount = 0
+            for buffer in bufferList {
+                channelCount += Int(buffer.mNumberChannels)
+            }
+            
+            // Skip if no input channels
+            if channelCount == 0 { continue }
+            
+            // Get device name
+            propertyAddress.mSelector = kAudioDevicePropertyDeviceNameCFString
+            propertyAddress.mScope = kAudioObjectPropertyScopeGlobal
+            propertySize = UInt32(MemoryLayout<CFString>.size)
+            var deviceNameCFString: Unmanaged<CFString>?
+            
+            status = AudioObjectGetPropertyData(
+                deviceID,
+                &propertyAddress,
+                0,
+                nil,
+                &propertySize,
+                &deviceNameCFString
+            )
+            
+            guard status == noErr, let cfString = deviceNameCFString?.takeRetainedValue() else {
+                continue
+            }
+            
+            let deviceName = cfString as String
+            
+            // Get transport type
+            propertyAddress.mSelector = kAudioDevicePropertyTransportType
+            propertySize = UInt32(MemoryLayout<UInt32>.size)
+            var transportType: UInt32 = 0
+            
+            AudioObjectGetPropertyData(
+                deviceID,
+                &propertyAddress,
+                0,
+                nil,
+                &propertySize,
+                &transportType
+            )
+            
+            let isBluetooth = (transportType == 0x626c7565) // 'blue'
+            let isBuiltIn = (transportType == 0x62756c74) // 'bult'
+            
+            var deviceType = "external"
+            if isBuiltIn {
+                deviceType = "built-in"
+            } else if isBluetooth {
+                deviceType = "bluetooth"
+            }
+            
+            let deviceInfo: [String: Any] = [
+                "id": String(deviceID),
+                "name": deviceName,
+                "type": deviceType,
+                "channelCount": channelCount,
+                "isDefault": deviceID == defaultDeviceID
+            ]
+            
+            devices.append(deviceInfo)
+            print("🎤 Found input device: \(deviceName) (\(deviceType), \(channelCount) channels)")
+        }
+        
+        print("✅ Total input devices found: \(devices.count)")
+        result(devices)
     }
     
     private func startCapture(config: [String: Any]?, result: @escaping FlutterResult) {
