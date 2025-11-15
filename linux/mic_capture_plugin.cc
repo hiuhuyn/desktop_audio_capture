@@ -1,12 +1,14 @@
-#include "include/audio_capture/audio_capture_plugin.h"
+#include "include/audio_capture/mic_capture_plugin.h"
 
 #include <flutter_linux/flutter_linux.h>
 #include <glib-object.h>
 #include <glib.h>
 #include <pulse/error.h>
 #include <pulse/simple.h>
+#include <pulse/pulseaudio.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -14,26 +16,26 @@
 
 namespace {
 
-constexpr char kMethodChannelName[] = "com.system_audio_transcriber/audio_capture";
-constexpr char kEventChannelName[] = "com.system_audio_transcriber/audio_stream";
+constexpr char kMethodChannelName[] = "com.mic_audio_transcriber/mic_capture";
+constexpr char kEventChannelName[] = "com.mic_audio_transcriber/mic_stream";
 
 constexpr int kDefaultSampleRate = 16000;
 constexpr int kDefaultChannels = 1;
 constexpr int kDefaultBitsPerSample = 16;
-constexpr int kDefaultChunkDurationMs = 1000;
 constexpr float kDefaultGainBoost = 2.5f;
 constexpr float kDefaultInputVolume = 1.0f;
+constexpr size_t kBufferSizeFrames = 4096;
 
 struct AudioChunkPayload {
-  AudioChunkPayload(AudioCapturePlugin* plugin, GBytes* bytes)
+  AudioChunkPayload(MicCapturePlugin* plugin, GBytes* bytes)
       : plugin(plugin), bytes(bytes) {}
 
-  AudioCapturePlugin* plugin;
+  MicCapturePlugin* plugin;
   GBytes* bytes;
 };
 
 struct CaptureThreadContext {
-  AudioCapturePlugin* plugin;
+  MicCapturePlugin* plugin;
   pa_simple* stream;
   size_t chunk_size;
   int sample_rate;
@@ -48,7 +50,7 @@ gpointer CaptureThread(gpointer user_data);
 
 }  // namespace
 
-struct _AudioCapturePlugin {
+struct _MicCapturePlugin {
   GObject parent_instance;
 
   FlMethodChannel* method_channel;
@@ -63,12 +65,46 @@ struct _AudioCapturePlugin {
   GThread* capture_thread;
 };
 
-G_DEFINE_TYPE(AudioCapturePlugin, audio_capture_plugin, G_TYPE_OBJECT)
+G_DEFINE_TYPE(MicCapturePlugin, mic_capture_plugin, G_TYPE_OBJECT)
 
 namespace {
 
+bool CheckMicSupport() {
+  pa_simple* stream = nullptr;
+  pa_sample_spec spec;
+  spec.rate = kDefaultSampleRate;
+  spec.channels = static_cast<uint8_t>(kDefaultChannels);
+  spec.format = PA_SAMPLE_S16LE;
+
+  pa_buffer_attr attr;
+  attr.maxlength = static_cast<uint32_t>(-1);
+  attr.tlength = static_cast<uint32_t>(-1);
+  attr.prebuf = static_cast<uint32_t>(-1);
+  attr.minreq = static_cast<uint32_t>(-1);
+  attr.fragsize = static_cast<uint32_t>(-1);
+
+  int error = 0;
+  // Try to open default source (microphone)
+  stream = pa_simple_new(nullptr, "Voxa", PA_STREAM_RECORD, nullptr,
+                         "Mic Check", &spec, nullptr, &attr, &error);
+
+  if (stream == nullptr) {
+    return false;
+  }
+
+  pa_simple_free(stream);
+  return true;
+}
+
+size_t CalculateChunkSize(int sample_rate, int channels, int bits_per_sample) {
+  const int bytes_per_sample = std::max(bits_per_sample / 8, 1);
+  const size_t frame_size = static_cast<size_t>(channels) * bytes_per_sample;
+  return kBufferSizeFrames * frame_size;
+}
+
 bool OpenPulseStream(int sample_rate, int channels, int bits_per_sample,
-                     size_t chunk_size, pa_simple** out_stream, std::string* error_message) {
+                     size_t chunk_size, pa_simple** out_stream,
+                     std::string* error_message) {
   pa_sample_spec spec;
   spec.rate = sample_rate;
   spec.channels = static_cast<uint8_t>(channels);
@@ -80,22 +116,15 @@ bool OpenPulseStream(int sample_rate, int channels, int bits_per_sample,
 
   pa_buffer_attr attr;
   attr.maxlength = static_cast<uint32_t>(chunk_size * 4);
-  attr.tlength = (uint32_t)-1;
-  attr.prebuf = (uint32_t)-1;
-  attr.minreq = (uint32_t)-1;
+  attr.tlength = static_cast<uint32_t>(-1);
+  attr.prebuf = static_cast<uint32_t>(-1);
+  attr.minreq = static_cast<uint32_t>(-1);
   attr.fragsize = static_cast<uint32_t>(chunk_size);
 
   int error = 0;
-
-  pa_simple* stream =
-      pa_simple_new(nullptr, "Voxa", PA_STREAM_RECORD, "@DEFAULT_MONITOR@",
-                    "System Capture", &spec, nullptr, &attr, &error);
-
-  if (stream == nullptr) {
-    // Fallback to default source (microphone) if monitor is unavailable.
-    stream = pa_simple_new(nullptr, "Voxa", PA_STREAM_RECORD, nullptr,
-                           "Default Capture", &spec, nullptr, &attr, &error);
-  }
+  // Use nullptr to get default source (microphone)
+  pa_simple* stream = pa_simple_new(nullptr, "Voxa", PA_STREAM_RECORD, nullptr,
+                                     "Mic Capture", &spec, nullptr, &attr, &error);
 
   if (stream == nullptr) {
     if (error_message != nullptr) {
@@ -106,22 +135,6 @@ bool OpenPulseStream(int sample_rate, int channels, int bits_per_sample,
 
   *out_stream = stream;
   return true;
-}
-
-size_t CalculateChunkSize(int sample_rate, int channels, int bits_per_sample,
-                          int chunk_duration_ms) {
-  const int bytes_per_sample = std::max(bits_per_sample / 8, 1);
-  const size_t bytes_per_second =
-      static_cast<size_t>(sample_rate) * static_cast<size_t>(channels) *
-      static_cast<size_t>(bytes_per_sample);
-  size_t chunk_size =
-      (bytes_per_second * static_cast<size_t>(chunk_duration_ms)) / 1000;
-  if (chunk_size == 0) {
-    chunk_size = bytes_per_second / 20;  // 50 ms fallback
-  }
-  const size_t frame_size = static_cast<size_t>(channels) * bytes_per_sample;
-  chunk_size = std::max(chunk_size, frame_size);
-  return chunk_size;
 }
 
 void ApplyGainBoostAndConvertToMono(const int16_t* input, int16_t* output,
@@ -152,7 +165,7 @@ void ApplyGainBoostAndConvertToMono(const int16_t* input, int16_t* output,
 gboolean EmitAudioOnMainThread(gpointer user_data) {
   std::unique_ptr<AudioChunkPayload> payload(
       static_cast<AudioChunkPayload*>(user_data));
-  AudioCapturePlugin* plugin = payload->plugin;
+  MicCapturePlugin* plugin = payload->plugin;
 
   gsize length = 0;
   const guint8* data =
@@ -166,7 +179,7 @@ gboolean EmitAudioOnMainThread(gpointer user_data) {
   if (can_emit && length > 0) {
     g_autoptr(FlValue) value = fl_value_new_uint8_list(data, length);
     g_autoptr(GError) error = nullptr;
-    
+
     if (!fl_event_channel_send(plugin->event_channel, value, nullptr, &error)) {
       g_warning("Failed to send audio chunk: %s",
                 error != nullptr ? error->message : "unknown error");
@@ -182,13 +195,15 @@ gboolean EmitAudioOnMainThread(gpointer user_data) {
 gpointer CaptureThread(gpointer user_data) {
   std::unique_ptr<CaptureThreadContext> context(
       static_cast<CaptureThreadContext*>(user_data));
-  AudioCapturePlugin* plugin = context->plugin;
+  MicCapturePlugin* plugin = context->plugin;
 
   // Read raw audio from PulseAudio
-  std::vector<uint8_t> raw_buffer(context->chunk_size);
+  const size_t raw_chunk_size = CalculateChunkSize(
+      context->sample_rate, context->channels, context->bits_per_sample);
+  std::vector<uint8_t> raw_buffer(raw_chunk_size);
 
   // Output buffer for processed audio (mono)
-  const size_t output_frame_count = context->chunk_size / (sizeof(int16_t) * context->channels);
+  const size_t output_frame_count = kBufferSizeFrames;
   std::vector<int16_t> output_buffer(output_frame_count);
 
   while (!g_atomic_int_get(&plugin->should_stop)) {
@@ -213,7 +228,7 @@ gpointer CaptureThread(gpointer user_data) {
       }
     }
 
-    // Process audio: convert to mono and apply gain boost
+    // Convert to mono and apply gain boost
     const int16_t* input_samples =
         reinterpret_cast<const int16_t*>(raw_buffer.data());
     const size_t input_frame_count =
@@ -221,16 +236,16 @@ gpointer CaptureThread(gpointer user_data) {
     const size_t frames_to_process =
         std::min(input_frame_count, output_frame_count);
 
-    // Always process to ensure mono output and gain boost application
     ApplyGainBoostAndConvertToMono(input_samples, output_buffer.data(),
                                     frames_to_process, context->channels,
                                     context->gain_boost);
 
-    // Create output bytes (mono)
+    // Create output bytes
     const size_t output_bytes = frames_to_process * sizeof(int16_t);
     GBytes* bytes = g_bytes_new(output_buffer.data(), output_bytes);
     auto* payload = new AudioChunkPayload(plugin, bytes);
     g_object_ref(plugin);
+
     g_main_context_invoke_full(plugin->main_context, G_PRIORITY_DEFAULT,
                                EmitAudioOnMainThread, payload, nullptr);
   }
@@ -246,10 +261,10 @@ gpointer CaptureThread(gpointer user_data) {
   return nullptr;
 }
 
-static FlMethodErrorResponse* OnListenHandler(FlEventChannel* channel, 
-                                              FlValue* arguments, 
+static FlMethodErrorResponse* OnListenHandler(FlEventChannel* channel,
+                                              FlValue* arguments,
                                               gpointer user_data) {
-  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  MicCapturePlugin* plugin = MIC_CAPTURE_PLUGIN(user_data);
   (void)channel;
   (void)arguments;
   g_mutex_lock(&plugin->lock);
@@ -258,10 +273,10 @@ static FlMethodErrorResponse* OnListenHandler(FlEventChannel* channel,
   return nullptr;
 }
 
-static FlMethodErrorResponse* OnCancelHandler(FlEventChannel* channel, 
+static FlMethodErrorResponse* OnCancelHandler(FlEventChannel* channel,
                                               FlValue* arguments,
                                               gpointer user_data) {
-  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  MicCapturePlugin* plugin = MIC_CAPTURE_PLUGIN(user_data);
   (void)channel;
   (void)arguments;
   g_mutex_lock(&plugin->lock);
@@ -270,27 +285,10 @@ static FlMethodErrorResponse* OnCancelHandler(FlEventChannel* channel,
   return nullptr;
 }
 
-bool IsSupported() {
-  pa_simple* stream = nullptr;
-  std::string error_message;
-  const size_t chunk_size =
-      CalculateChunkSize(kDefaultSampleRate, kDefaultChannels,
-                         kDefaultBitsPerSample, kDefaultChunkDurationMs);
-  if (!OpenPulseStream(kDefaultSampleRate, kDefaultChannels,
-                       kDefaultBitsPerSample, chunk_size, &stream,
-                       &error_message)) {
-    g_warning("PulseAudio check failed: %s", error_message.c_str());
-    return false;
-  }
-  pa_simple_free(stream);
-  return true;
-}
-
-bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
+bool StartCapture(MicCapturePlugin* plugin, FlValue* args) {
   int sample_rate = kDefaultSampleRate;
   int channels = kDefaultChannels;
   int bits_per_sample = kDefaultBitsPerSample;
-  int chunk_duration_ms = kDefaultChunkDurationMs;
   float gain_boost = kDefaultGainBoost;
   float input_volume = kDefaultInputVolume;
 
@@ -307,14 +305,9 @@ bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
       channels = fl_value_get_int(value);
     }
 
-    value = fl_value_lookup_string(args, "bitsPerSample");
+    value = fl_value_lookup_string(args, "bitDepth");
     if (value != nullptr && fl_value_get_type(value) == FL_VALUE_TYPE_INT) {
       bits_per_sample = fl_value_get_int(value);
-    }
-
-    value = fl_value_lookup_string(args, "chunkDurationMs");
-    if (value != nullptr && fl_value_get_type(value) == FL_VALUE_TYPE_INT) {
-      chunk_duration_ms = fl_value_get_int(value);
     }
 
     value = fl_value_lookup_string(args, "gainBoost");
@@ -330,16 +323,15 @@ bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
     }
   }
 
+  // Clamp values
   sample_rate = std::max(sample_rate, 8000);
   channels = std::max(1, std::min(channels, 2));
-  bits_per_sample = 16;
-  chunk_duration_ms = std::max(chunk_duration_ms, 10);
+  bits_per_sample = 16;  // Force 16-bit
   gain_boost = std::max(0.1f, std::min(10.0f, gain_boost));
   input_volume = std::max(0.0f, std::min(1.0f, input_volume));
 
   size_t chunk_size =
-      CalculateChunkSize(sample_rate, channels, bits_per_sample,
-                         chunk_duration_ms);
+      CalculateChunkSize(sample_rate, channels, bits_per_sample);
 
   pa_simple* stream = nullptr;
   std::string error_message;
@@ -361,19 +353,12 @@ bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
   plugin->is_capturing = TRUE;
 
   auto* context = new CaptureThreadContext{
-      plugin,
-      stream,
-      chunk_size,
-      sample_rate,
-      channels,
-      bits_per_sample,
-      gain_boost,
-      input_volume,
-  };
+      plugin, stream, chunk_size, sample_rate, channels,
+      bits_per_sample, gain_boost, input_volume};
 
   g_object_ref(plugin);
-  plugin->capture_thread = g_thread_new("voxa-audio-capture", CaptureThread,
-                                        context);
+  plugin->capture_thread =
+      g_thread_new("voxa-mic-capture", CaptureThread, context);
   g_mutex_unlock(&plugin->lock);
 
   if (plugin->capture_thread == nullptr) {
@@ -390,7 +375,7 @@ bool StartCapture(AudioCapturePlugin* plugin, FlValue* args) {
   return true;
 }
 
-bool StopCapture(AudioCapturePlugin* plugin) {
+bool StopCapture(MicCapturePlugin* plugin) {
   g_mutex_lock(&plugin->lock);
   if (!plugin->is_capturing) {
     g_mutex_unlock(&plugin->lock);
@@ -412,14 +397,20 @@ bool StopCapture(AudioCapturePlugin* plugin) {
   return true;
 }
 
-void HandleMethodCall(AudioCapturePlugin* plugin, FlMethodCall* method_call) {
+void HandleMethodCall(MicCapturePlugin* plugin, FlMethodCall* method_call) {
   const gchar* method = fl_method_call_get_name(method_call);
   g_autoptr(FlMethodResponse) response = nullptr;
 
   if (strcmp(method, "isSupported") == 0) {
-    g_autoptr(FlValue) result = fl_value_new_bool(IsSupported());
+    g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+  } else if (strcmp(method, "checkMicSupport") == 0) {
+    const bool supported = CheckMicSupport();
+    g_autoptr(FlValue) result = fl_value_new_bool(supported);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (strcmp(method, "requestPermissions") == 0) {
+    // On Linux, permissions are typically handled by the system
+    // PulseAudio will handle access automatically
     g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (strcmp(method, "startCapture") == 0) {
@@ -431,12 +422,6 @@ void HandleMethodCall(AudioCapturePlugin* plugin, FlMethodCall* method_call) {
     const bool stopped = StopCapture(plugin);
     g_autoptr(FlValue) result = fl_value_new_bool(stopped);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
-  } else if (strcmp(method, "isCapturing") == 0) {
-    g_mutex_lock(&plugin->lock);
-    const gboolean capturing = plugin->is_capturing;
-    g_mutex_unlock(&plugin->lock);
-    g_autoptr(FlValue) result = fl_value_new_bool(capturing);
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
@@ -447,17 +432,17 @@ void HandleMethodCall(AudioCapturePlugin* plugin, FlMethodCall* method_call) {
   }
 }
 
-static void MethodCallHandler(FlMethodChannel* channel, 
+static void MethodCallHandler(FlMethodChannel* channel,
                                FlMethodCall* method_call,
                                gpointer user_data) {
-  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(user_data);
+  MicCapturePlugin* plugin = MIC_CAPTURE_PLUGIN(user_data);
   HandleMethodCall(plugin, method_call);
 }
 
 }  // namespace
 
-static void audio_capture_plugin_dispose(GObject* object) {
-  AudioCapturePlugin* plugin = AUDIO_CAPTURE_PLUGIN(object);
+static void mic_capture_plugin_dispose(GObject* object) {
+  MicCapturePlugin* plugin = MIC_CAPTURE_PLUGIN(object);
 
   StopCapture(plugin);
 
@@ -476,15 +461,15 @@ static void audio_capture_plugin_dispose(GObject* object) {
 
   g_mutex_clear(&plugin->lock);
 
-  G_OBJECT_CLASS(audio_capture_plugin_parent_class)->dispose(object);
+  G_OBJECT_CLASS(mic_capture_plugin_parent_class)->dispose(object);
 }
 
-static void audio_capture_plugin_class_init(AudioCapturePluginClass* klass) {
+static void mic_capture_plugin_class_init(MicCapturePluginClass* klass) {
   GObjectClass* object_class = G_OBJECT_CLASS(klass);
-  object_class->dispose = audio_capture_plugin_dispose;
+  object_class->dispose = mic_capture_plugin_dispose;
 }
 
-static void audio_capture_plugin_init(AudioCapturePlugin* plugin) {
+static void mic_capture_plugin_init(MicCapturePlugin* plugin) {
   g_mutex_init(&plugin->lock);
   plugin->main_context = g_main_context_ref_thread_default();
   plugin->is_capturing = FALSE;
@@ -495,33 +480,30 @@ static void audio_capture_plugin_init(AudioCapturePlugin* plugin) {
   g_atomic_int_set(&plugin->should_stop, 0);
 }
 
-void audio_capture_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
+void mic_capture_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
   FlBinaryMessenger* messenger = fl_plugin_registrar_get_messenger(registrar);
-  audio_capture_plugin_register_with_messenger(messenger);
+  mic_capture_plugin_register_with_messenger(messenger);
 }
 
-void audio_capture_plugin_register_with_messenger(FlBinaryMessenger* messenger) {
-  AudioCapturePlugin* plugin =
-      AUDIO_CAPTURE_PLUGIN(g_object_new(audio_capture_plugin_get_type(), nullptr));
+void mic_capture_plugin_register_with_messenger(FlBinaryMessenger* messenger) {
+  MicCapturePlugin* plugin = MIC_CAPTURE_PLUGIN(
+      g_object_new(mic_capture_plugin_get_type(), nullptr));
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
 
   plugin->method_channel = fl_method_channel_new(
       messenger, kMethodChannelName, FL_METHOD_CODEC(codec));
-  fl_method_channel_set_method_call_handler(
-      plugin->method_channel, MethodCallHandler, g_object_ref(plugin),
-      g_object_unref);
+  fl_method_channel_set_method_call_handler(plugin->method_channel,
+                                            MethodCallHandler, g_object_ref(plugin),
+                                            g_object_unref);
 
-  plugin->event_channel = fl_event_channel_new(
-      messenger, kEventChannelName, FL_METHOD_CODEC(codec));
-  
-  // Use the newer API with proper function signatures
-  fl_event_channel_set_stream_handlers(
-      plugin->event_channel, 
-      OnListenHandler, 
-      OnCancelHandler,
-      g_object_ref(plugin), 
-      g_object_unref);
+  plugin->event_channel = fl_event_channel_new(messenger, kEventChannelName,
+                                                 FL_METHOD_CODEC(codec));
+
+  fl_event_channel_set_stream_handlers(plugin->event_channel, OnListenHandler,
+                                        OnCancelHandler, g_object_ref(plugin),
+                                        g_object_unref);
 
   g_object_unref(plugin);
 }
+
