@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:audio_capture/audio_capture.dart';
+import 'package:desktop_audio_capture/audio_capture.dart';
 import 'package:flutter/services.dart';
-export 'package:audio_capture/config/mic_audio_config.dart';
-export 'package:audio_capture/mic/input_device.dart';
+export 'package:desktop_audio_capture/config/mic_audio_config.dart';
+export 'package:desktop_audio_capture/mic/input_device.dart';
 
 /// Decibel data from audio capture
 class DecibelData {

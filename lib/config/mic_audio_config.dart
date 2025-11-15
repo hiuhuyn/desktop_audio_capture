@@ -1,4 +1,4 @@
-import 'package:audio_capture/audio_capture.dart';
+import 'package:desktop_audio_capture/audio_capture.dart';
 
 class MicAudioConfig extends AudioCaptureConfig {
   /// Sample rate in Hz (default: 16000)

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:audio_capture/mic/mic_audio_capture.dart';
+import 'package:desktop_audio_capture/mic/mic_audio_capture.dart';
 import 'providers/audio_capture_provider.dart';
 import 'providers/settings_provider.dart';
 import 'widgets/audio_data_display.dart';

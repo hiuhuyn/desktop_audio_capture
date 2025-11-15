@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:audio_capture/audio_capture.dart';
-import 'package:audio_capture/mic/mic_audio_capture.dart' hide DecibelData;
-import 'package:audio_capture/system/system_audio_capture.dart';
+import 'package:desktop_audio_capture/audio_capture.dart';
+import 'package:desktop_audio_capture/mic/mic_audio_capture.dart' hide DecibelData;
+import 'package:desktop_audio_capture/system/system_audio_capture.dart';
 
 class AudioCaptureProvider with ChangeNotifier {
   final MicAudioCapture _micCapture = MicAudioCapture();

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:audio_capture/config/mic_audio_config.dart';
-import 'package:audio_capture/config/system_adudio_config.dart';
+import 'package:desktop_audio_capture/config/mic_audio_config.dart';
+import 'package:desktop_audio_capture/config/system_adudio_config.dart';
 
 class SettingsProvider with ChangeNotifier {
   // Mic settings

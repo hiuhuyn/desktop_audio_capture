@@ -5,7 +5,7 @@
 import FlutterMacOS
 import Foundation
 
-import audio_capture
+import desktop_audio_capture
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AudioCapturePlugin.register(with: registry.registrar(forPlugin: "AudioCapturePlugin"))

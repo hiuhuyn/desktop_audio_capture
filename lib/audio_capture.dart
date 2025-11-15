@@ -5,11 +5,11 @@
 // platforms in the `pubspec.yaml` at
 // https://flutter.dev/to/pubspec-plugin-platforms.
 
-export 'package:audio_capture/mic/mic_audio_capture.dart';
-export 'package:audio_capture/system/system_audio_capture.dart';
+export 'package:desktop_audio_capture/mic/mic_audio_capture.dart';
+export 'package:desktop_audio_capture/system/system_audio_capture.dart';
 
 // Re-export DecibelData from mic_audio_capture (both mic and system use the same class)
-export 'package:audio_capture/mic/mic_audio_capture.dart' show DecibelData;
+export 'package:desktop_audio_capture/mic/mic_audio_capture.dart' show DecibelData;
 
 abstract class AudioCapture {
   Future<void> initialize();
