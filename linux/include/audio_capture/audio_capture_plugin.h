@@ -11,15 +11,24 @@ G_BEGIN_DECLS
 #define FLUTTER_PLUGIN_EXPORT
 #endif
 
+// Forward declarations
 typedef struct _AudioCapturePlugin AudioCapturePlugin;
 typedef struct {
   GObjectClass parent_class;
 } AudioCapturePluginClass;
 
+// Type macros
 FLUTTER_PLUGIN_EXPORT GType audio_capture_plugin_get_type();
 
+#define AUDIO_CAPTURE_PLUGIN_TYPE (audio_capture_plugin_get_type())
+#define AUDIO_CAPTURE_PLUGIN(obj) \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), AUDIO_CAPTURE_PLUGIN_TYPE, AudioCapturePlugin))
+
+// Public API
 FLUTTER_PLUGIN_EXPORT void audio_capture_plugin_register_with_registrar(
     FlPluginRegistrar* registrar);
+FLUTTER_PLUGIN_EXPORT void audio_capture_plugin_register_with_messenger(
+    FlBinaryMessenger* messenger);
 
 G_END_DECLS
 

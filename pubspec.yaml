@@ -5,6 +5,8 @@ homepage: https://github.com/hiuhuyn/audio_capture
 
 plugin:
   platforms:
+    linux:
+      pluginClass: AudioCapturePlugin
     macos:
       pluginClass: AudioCapturePlugin
 
@@ -41,6 +43,8 @@ flutter:
   # adding or updating assets for this project.
   plugin:
     platforms:
+      linux:
+        pluginClass: AudioCapturePlugin
       macos:
         pluginClass: AudioCapturePlugin
 
