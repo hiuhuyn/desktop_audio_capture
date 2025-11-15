@@ -24,13 +24,13 @@ A Flutter plugin for capturing audio on desktop platforms (macOS, Linux, Windows
 ## Screenshots
 
 ### Home Screen
-![Example Home](docs/example_home.png)
+![Example Home](doc/example_home.png)
 
 ### Microphone Settings
-![Example Setting Mic](docs/example_setting_mic.png)
+![Example Setting Mic](doc/example_setting_mic.png)
 
 ### System Audio Settings
-![Example Setting System](docs/example_setting_system.png)
+![Example Setting System](doc/example_setting_system.png)
 
 ## Installation
 
