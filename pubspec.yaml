@@ -1,5 +1,5 @@
 name: desktop_audio_capture
-description: "A new Flutter plugin project."
+description: "A Flutter plugin for capturing audio on desktop platforms (macOS, Linux, Windows). Supports capturing from microphone and system audio with features like audio data streaming, decibel monitoring, device management, and permission handling."
 version: 0.0.1
 homepage: https://github.com/hiuhuyn/desktop_audio_capture
 issue_tracker: https://github.com/hiuhuyn/desktop_audio_capture/issues
