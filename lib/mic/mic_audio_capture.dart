@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audio_capture/audio_capture.dart';
 import 'package:flutter/services.dart';
 export 'package:audio_capture/config/mic_audio_config.dart';
+export 'package:audio_capture/mic/input_device.dart';
 
 enum _MicAudioMethod {
   isSupported,
@@ -177,9 +178,9 @@ class MicAudioCapture extends AudioCapture {
     return true;
   }
 
-  /// Kiểm tra xem có thiết bị input (microphone) nào khả dụng không
+  /// Check if there is any available input device (microphone)
   /// 
-  /// Returns `true` nếu có ít nhất một thiết bị input khả dụng, `false` nếu không có
+  /// Returns `true` if there is at least one available input device, `false` if there is no available input device
   Future<bool> hasInputDevice() async {
     try {
       final hasDevice = await _channel.invokeMethod<bool>(
@@ -191,15 +192,15 @@ class MicAudioCapture extends AudioCapture {
     }
   }
 
-  /// Lấy danh sách tất cả các thiết bị input (microphone) khả dụng
+  /// Get available input devices (microphone)
   /// 
-  /// Returns một danh sách các Map chứa thông tin thiết bị:
-  /// - `id`: String - ID của thiết bị
-  /// - `name`: String - Tên thiết bị
-  /// - `type`: String - Loại thiết bị ("built-in", "bluetooth", hoặc "external")
-  /// - `channelCount`: int - Số lượng kênh audio
-  /// - `isDefault`: bool - Có phải thiết bị mặc định không
-  Future<List<Map<String, dynamic>>> getAvailableInputDevices() async {
+  /// Returns a list of [InputDevice] containing device information:
+  /// - `id`: Device ID
+  /// - `name`: Device name
+  /// - `type`: Device type ([InputDeviceType])
+  /// - `channelCount`: Number of audio channels
+  /// - `isDefault`: Whether the device is the default device
+  Future<List<InputDevice>> getAvailableInputDevices() async {
     try {
       final devices = await _channel.invokeMethod<List<dynamic>>(
         _MicAudioMethod.getAvailableInputDevices.name,
@@ -209,12 +210,12 @@ class MicAudioCapture extends AudioCapture {
         return [];
       }
       
-      return devices.map((device) {
-        if (device is Map) {
-          return Map<String, dynamic>.from(device);
-        }
-        return <String, dynamic>{};
-      }).toList();
+      return devices
+          .whereType<Map>()
+          .map((device) => InputDevice.fromMap(
+                Map<String, dynamic>.from(device),
+              ))
+          .toList();
     } catch (e) {
       rethrow;
     }
