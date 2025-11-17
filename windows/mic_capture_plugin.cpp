@@ -229,6 +229,7 @@ double MicCapturePlugin::CalculateDecibel(const int16_t* samples,
 
 void MicCapturePlugin::SendStatusUpdate(bool is_active,
                                         const std::string& device_name) {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (status_event_sink_) {
     flutter::EncodableMap status_map;
     status_map[flutter::EncodableValue("isActive")] = flutter::EncodableValue(is_active);
@@ -250,6 +251,7 @@ void MicCapturePlugin::SendStatusUpdate(bool is_active,
 }
 
 void MicCapturePlugin::SendDecibelUpdate(double decibel) {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (decibel_event_sink_) {
     flutter::EncodableMap decibel_map;
     decibel_map[flutter::EncodableValue("decibel")] = flutter::EncodableValue(decibel);
@@ -369,7 +371,9 @@ bool MicCapturePlugin::OpenWASAPIStreamWithRetry(
                           __uuidof(IMMDeviceEnumerator),
                           reinterpret_cast<void**>(&enumerator));
     if (FAILED(hr)) {
-      CoUninitialize();
+      if (com_initialized_this_attempt) {
+        CoUninitialize();
+      }
       if (attempt < max_retries && retry_delays[attempt - 1] > 0.0) {
         std::this_thread::sleep_for(
             std::chrono::milliseconds(static_cast<int>(retry_delays[attempt - 1] * 1000)));
@@ -830,12 +834,10 @@ void MicCapturePlugin::CaptureThread() {
                   reinterpret_cast<uint8_t*>(output_buffer.data()) + output_bytes);
               event_sink_->Success(flutter::EncodableValue(audio_data));
             }
-
-            // Send decibel data
-            if (decibel_event_sink_) {
-              SendDecibelUpdate(decibel);
-            }
           }
+
+          // Send decibel data (has its own lock)
+          SendDecibelUpdate(decibel);
 
           raw_buffer_pos = 0;
         }

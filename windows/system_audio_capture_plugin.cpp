@@ -222,6 +222,7 @@ double SystemAudioCapturePlugin::CalculateDecibel(const int16_t* samples,
 }
 
 void SystemAudioCapturePlugin::SendStatusUpdate(bool is_active) {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (status_event_sink_) {
     flutter::EncodableMap status_map;
     status_map[flutter::EncodableValue("isActive")] = flutter::EncodableValue(is_active);
@@ -229,7 +230,6 @@ void SystemAudioCapturePlugin::SendStatusUpdate(bool is_active) {
     // Get current timestamp in seconds
     auto now = std::chrono::system_clock::now();
     auto duration = now.time_since_epoch();
-    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
     auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     double timestamp = static_cast<double>(milliseconds) / 1000.0;
     
@@ -239,6 +239,7 @@ void SystemAudioCapturePlugin::SendStatusUpdate(bool is_active) {
 }
 
 void SystemAudioCapturePlugin::SendDecibelUpdate(double decibel) {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (decibel_event_sink_) {
     flutter::EncodableMap decibel_map;
     decibel_map[flutter::EncodableValue("decibel")] = flutter::EncodableValue(decibel);
@@ -315,14 +316,18 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
                         __uuidof(IMMDeviceEnumerator),
                         reinterpret_cast<void**>(&enumerator));
   if (FAILED(hr)) {
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
   hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device_);
   enumerator->Release();
   if (FAILED(hr)) {
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -332,7 +337,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
   if (FAILED(hr)) {
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -343,7 +350,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
     audio_client_ = nullptr;
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -368,7 +377,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
     audio_client_ = nullptr;
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -381,7 +392,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
     audio_client_ = nullptr;
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -395,7 +408,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
     audio_client_ = nullptr;
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -410,7 +425,9 @@ bool SystemAudioCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
     audio_client_ = nullptr;
     device_->Release();
     device_ = nullptr;
-    CoUninitialize();
+    if (com_initialized_) {
+      CoUninitialize();
+    }
     return false;
   }
 
@@ -565,12 +582,10 @@ void SystemAudioCapturePlugin::CaptureThread() {
                   reinterpret_cast<uint8_t*>(output_buffer.data()) + output_bytes);
               event_sink_->Success(flutter::EncodableValue(audio_data));
             }
-
-            // Send decibel data
-            if (decibel_event_sink_) {
-              SendDecibelUpdate(decibel);
-            }
           }
+
+          // Send decibel data (has its own lock)
+          SendDecibelUpdate(decibel);
 
           raw_buffer_pos = 0;
         }
