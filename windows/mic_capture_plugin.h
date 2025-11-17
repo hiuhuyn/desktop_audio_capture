@@ -13,15 +13,17 @@
 #include <vector>
 #include <string>
 
+// Include Windows headers for WAVEFORMATEX
+#include <mmsystem.h>
+
 // Forward declarations for WASAPI interfaces
 struct IAudioClient;
 struct IAudioCaptureClient;
 struct IMMDevice;
-struct WAVEFORMATEX;
 
 namespace audio_capture {
 
-class MicCapturePlugin {
+class MicCapturePlugin : public flutter::Plugin {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows *registrar);
 

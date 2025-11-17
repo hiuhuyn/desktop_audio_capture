@@ -12,15 +12,17 @@
 #include <atomic>
 #include <vector>
 
+// Include Windows headers for WAVEFORMATEX
+#include <mmsystem.h>
+
 // Forward declarations for WASAPI interfaces
 struct IAudioClient;
 struct IAudioCaptureClient;
 struct IMMDevice;
-struct WAVEFORMATEX;
 
 namespace audio_capture {
 
-class SystemAudioCapturePlugin {
+class SystemAudioCapturePlugin : public flutter::Plugin {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows *registrar);
 
@@ -39,6 +41,7 @@ class SystemAudioCapturePlugin {
   bool StartCapture(const flutter::EncodableMap* args);
   bool StopCapture();
   void CaptureThread();
+  void SetThreadPriority();
   double CalculateDecibel(const int16_t* samples, size_t sample_count);
   void ApplyGainBoostAndConvertToMono(const int16_t* input, int16_t* output,
                                       size_t frame_count, int input_channels,

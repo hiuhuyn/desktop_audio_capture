@@ -16,6 +16,9 @@
 #include "system_audio_capture_plugin.h"
 #include "mic_capture_plugin.h"
 
+// Include the public header for the wrapper function declaration
+#include "include/desktop_audio_capture/audio_capture_plugin.h"
+
 namespace audio_capture {
 
 // static
@@ -66,3 +69,12 @@ void AudioCapturePlugin::HandleMethodCall(
 }
 
 }  // namespace audio_capture
+
+// Wrapper function for plugin registration (used by generated_plugin_registrant.cc)
+// Export the function from the DLL
+__declspec(dllexport) void AudioCapturePluginRegisterWithRegistrar(
+    FlutterDesktopPluginRegistrarRef registrar) {
+  audio_capture::AudioCapturePlugin::RegisterWithRegistrar(
+      flutter::PluginRegistrarManager::GetInstance()
+          ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
+}

@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 # Project-level configuration.
-set(PROJECT_NAME "audio_capture")
+set(PROJECT_NAME "desktop_audio_capture")
 project(${PROJECT_NAME} LANGUAGES CXX)
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
@@ -14,7 +14,7 @@ cmake_policy(VERSION 3.14...3.25)
 
 # This value is used when generating builds using this plugin, so it must
 # not be changed
-set(PLUGIN_NAME "audio_capture_plugin")
+set(PLUGIN_NAME "desktop_audio_capture_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
@@ -30,6 +30,7 @@ list(APPEND PLUGIN_SOURCES
 # on PLUGIN_NAME above).
 add_library(${PLUGIN_NAME} SHARED
   "include/audio_capture/audio_capture_plugin_c_api.h"
+  "include/desktop_audio_capture/audio_capture_plugin.h"
   "audio_capture_plugin_c_api.cpp"
   ${PLUGIN_SOURCES}
 )

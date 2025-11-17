@@ -1,6 +1,9 @@
 #include "mic_capture_plugin.h"
 
+#define NOMINMAX
 #include <windows.h>
+#undef max
+#undef min
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -18,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -27,7 +31,44 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 
+// REFTIMES_PER_SEC is 10,000,000 (100 nanoseconds per second)
+#ifndef REFTIMES_PER_SEC
+#define REFTIMES_PER_SEC 10000000
+#endif
+
 namespace audio_capture {
+
+// Custom StreamHandler implementation
+template <typename T>
+class StreamHandlerFunctions : public flutter::StreamHandler<T> {
+ public:
+  using OnListenHandler = std::function<std::unique_ptr<flutter::StreamHandlerError<T>>(
+      const T* arguments,
+      std::unique_ptr<flutter::EventSink<T>>&& events)>;
+  using OnCancelHandler = std::function<std::unique_ptr<flutter::StreamHandlerError<T>>(
+      const T* arguments)>;
+
+  StreamHandlerFunctions(OnListenHandler on_listen, OnCancelHandler on_cancel)
+      : on_listen_(std::move(on_listen)), on_cancel_(std::move(on_cancel)) {}
+
+  virtual ~StreamHandlerFunctions() = default;
+
+ protected:
+  std::unique_ptr<flutter::StreamHandlerError<T>> OnListenInternal(
+      const T* arguments,
+      std::unique_ptr<flutter::EventSink<T>>&& events) override {
+    return on_listen_(arguments, std::move(events));
+  }
+
+  std::unique_ptr<flutter::StreamHandlerError<T>> OnCancelInternal(
+      const T* arguments) override {
+    return on_cancel_(arguments);
+  }
+
+ private:
+  OnListenHandler on_listen_;
+  OnCancelHandler on_cancel_;
+};
 
 namespace {
 
@@ -84,7 +125,7 @@ MicCapturePlugin::MicCapturePlugin(flutter::PluginRegistrarWindows *registrar)
           &flutter::StandardMethodCodec::GetInstance());
 
   event_channel_->SetStreamHandler(
-      std::make_unique<flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
+      std::make_unique<StreamHandlerFunctions<flutter::EncodableValue>>(
           [this](const flutter::EncodableValue* arguments,
                  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
               -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
@@ -105,7 +146,7 @@ MicCapturePlugin::MicCapturePlugin(flutter::PluginRegistrarWindows *registrar)
           &flutter::StandardMethodCodec::GetInstance());
 
   status_event_channel_->SetStreamHandler(
-      std::make_unique<flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
+      std::make_unique<StreamHandlerFunctions<flutter::EncodableValue>>(
           [this](const flutter::EncodableValue* arguments,
                  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
               -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
@@ -127,7 +168,7 @@ MicCapturePlugin::MicCapturePlugin(flutter::PluginRegistrarWindows *registrar)
           &flutter::StandardMethodCodec::GetInstance());
 
   decibel_event_channel_->SetStreamHandler(
-      std::make_unique<flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
+      std::make_unique<StreamHandlerFunctions<flutter::EncodableValue>>(
           [this](const flutter::EncodableValue* arguments,
                  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
               -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
@@ -185,7 +226,8 @@ void MicCapturePlugin::ApplyGainBoostAndConvertToMono(
     // Mono: just apply gain boost
     for (size_t i = 0; i < frame_count; ++i) {
       float sample = static_cast<float>(input[i]) * gain_boost;
-      sample = std::max(min_value, std::min(max_value, sample));
+      float clamped_sample = (std::min)(max_value, sample);
+      sample = (std::max)(min_value, clamped_sample);
       output[i] = static_cast<int16_t>(sample);
     }
   } else {
@@ -194,7 +236,8 @@ void MicCapturePlugin::ApplyGainBoostAndConvertToMono(
       float left = static_cast<float>(input[i * 2]);
       float right = static_cast<float>(input[i * 2 + 1]);
       float mono = (left + right) / 2.0f * gain_boost;
-      mono = std::max(min_value, std::min(max_value, mono));
+      float clamped_mono = (std::min)(max_value, mono);
+      mono = (std::max)(min_value, clamped_mono);
       output[i] = static_cast<int16_t>(mono);
     }
   }
@@ -224,46 +267,55 @@ double MicCapturePlugin::CalculateDecibel(const int16_t* samples,
   double decibel = 20.0 * log10(rms / max_value);
 
   // Clamp to reasonable range (-120 dB to 0 dB)
-  return std::max(-120.0, std::min(0.0, decibel));
+  double clamped_decibel = (std::min)(0.0, decibel);
+  return (std::max)(-120.0, clamped_decibel);
 }
 
 void MicCapturePlugin::SendStatusUpdate(bool is_active,
                                         const std::string& device_name) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (status_event_sink_) {
-    flutter::EncodableMap status_map;
-    status_map[flutter::EncodableValue("isActive")] = flutter::EncodableValue(is_active);
-    
-    // Get current timestamp in seconds
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-    double timestamp = static_cast<double>(milliseconds) / 1000.0;
-    
-    status_map[flutter::EncodableValue("timestamp")] = flutter::EncodableValue(timestamp);
-    
-    if (!device_name.empty()) {
-      status_map[flutter::EncodableValue("deviceName")] = flutter::EncodableValue(device_name);
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (status_event_sink_) {
+      flutter::EncodableMap status_map;
+      status_map[flutter::EncodableValue("isActive")] = flutter::EncodableValue(is_active);
+      
+      // Get current timestamp in seconds
+      auto now = std::chrono::system_clock::now();
+      auto duration = now.time_since_epoch();
+      auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+      double timestamp = static_cast<double>(milliseconds) / 1000.0;
+      
+      status_map[flutter::EncodableValue("timestamp")] = flutter::EncodableValue(timestamp);
+      
+      if (!device_name.empty()) {
+        status_map[flutter::EncodableValue("deviceName")] = flutter::EncodableValue(device_name);
+      }
+      
+      status_event_sink_->Success(flutter::EncodableValue(status_map));
     }
-    
-    status_event_sink_->Success(flutter::EncodableValue(status_map));
+  } catch (...) {
+    // Silently ignore errors to prevent crash
   }
 }
 
 void MicCapturePlugin::SendDecibelUpdate(double decibel) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (decibel_event_sink_) {
-    flutter::EncodableMap decibel_map;
-    decibel_map[flutter::EncodableValue("decibel")] = flutter::EncodableValue(decibel);
-    
-    // Get current timestamp in seconds
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-    double timestamp = static_cast<double>(milliseconds) / 1000.0;
-    
-    decibel_map[flutter::EncodableValue("timestamp")] = flutter::EncodableValue(timestamp);
-    decibel_event_sink_->Success(flutter::EncodableValue(decibel_map));
+  try {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (decibel_event_sink_) {
+      flutter::EncodableMap decibel_map;
+      decibel_map[flutter::EncodableValue("decibel")] = flutter::EncodableValue(decibel);
+      
+      // Get current timestamp in seconds
+      auto now = std::chrono::system_clock::now();
+      auto duration = now.time_since_epoch();
+      auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+      double timestamp = static_cast<double>(milliseconds) / 1000.0;
+      
+      decibel_map[flutter::EncodableValue("timestamp")] = flutter::EncodableValue(timestamp);
+      decibel_event_sink_->Success(flutter::EncodableValue(decibel_map));
+    }
+  } catch (...) {
+    // Silently ignore errors to prevent crash
   }
 }
 
@@ -301,7 +353,11 @@ std::string MicCapturePlugin::GetCurrentDeviceName() {
 bool MicCapturePlugin::IsBluetoothDevice() {
   // Check device name for Bluetooth keywords
   std::string device_name = GetCurrentDeviceName();
-  std::transform(device_name.begin(), device_name.end(), device_name.begin(), ::tolower);
+  
+  // Convert to lowercase safely
+  for (size_t i = 0; i < device_name.length(); ++i) {
+    device_name[i] = static_cast<char>(::tolower(static_cast<unsigned char>(device_name[i])));
+  }
   
   const char* bluetooth_keywords[] = {
     "bluetooth", "airpods", "beats", "jabra", "sony", "bose", "jbl"
@@ -341,9 +397,11 @@ bool MicCapturePlugin::OpenWASAPIStreamWithRetry(
     std::string* error_message) {
   const int max_retries = is_bluetooth ? 5 : 3;
   const double initial_wait = is_bluetooth ? 1.5 : 0.3;
-  const double retry_delays[] = is_bluetooth 
-    ? {0.5, 1.0, 1.5, 2.0, 2.5}
-    : {0.3, 0.6, 1.0, 0.0, 0.0};
+  // ĐÚNG - Khởi tạo array riêng
+  const double* retry_delays;
+  const double bluetooth_delays[] = {0.5, 1.0, 1.5, 2.0, 2.5};
+  const double normal_delays[] = {0.3, 0.6, 1.0, 0.0, 0.0};
+  retry_delays = is_bluetooth ? bluetooth_delays : normal_delays;
   
   // Initial wait for device to be ready
   std::this_thread::sleep_for(
@@ -422,8 +480,9 @@ bool MicCapturePlugin::OpenWASAPIStreamWithRetry(
       return false;
     }
 
-    // Get mix format
-    hr = audio_client_->GetMixFormat(&mix_format_);
+    // Get mix format - use original format for initialization
+    WAVEFORMATEX* device_format = nullptr;
+    hr = audio_client_->GetMixFormat(&device_format);
     if (FAILED(hr)) {
       audio_client_->Release();
       audio_client_ = nullptr;
@@ -443,16 +502,11 @@ bool MicCapturePlugin::OpenWASAPIStreamWithRetry(
       return false;
     }
 
-    // Modify format to match our requirements
-    mix_format_->wFormatTag = WAVE_FORMAT_PCM;
-    mix_format_->nChannels = static_cast<WORD>(channels);
-    mix_format_->nSamplesPerSec = sample_rate;
-    mix_format_->wBitsPerSample = 16;
-    mix_format_->nBlockAlign = mix_format_->nChannels * mix_format_->wBitsPerSample / 8;
-    mix_format_->nAvgBytesPerSec = mix_format_->nSamplesPerSec * mix_format_->nBlockAlign;
-    mix_format_->cbSize = 0;
+    // Store device format for use in capture thread
+    // We'll use the device's native format and convert in the thread
+    mix_format_ = device_format;
 
-    // Initialize audio client for capture
+    // Initialize audio client for capture with device's native format
     REFERENCE_TIME hnsRequestedDuration = REFTIMES_PER_SEC;
     hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0,
                                     hnsRequestedDuration, 0, mix_format_, nullptr);
@@ -648,11 +702,14 @@ bool MicCapturePlugin::StartCapture(const flutter::EncodableMap* args) {
   }
 
   // Clamp values
-  sample_rate_ = std::max(sample_rate_, 8000);
-  channels_ = std::max(1, std::min(channels_, 2));
+  sample_rate_ = (std::max)(sample_rate_, 8000);
+  int min_channels = (std::min)(channels_, 2);
+  channels_ = (std::max)(1, min_channels);
   bits_per_sample_ = 16;  // Force 16-bit
-  gain_boost_ = std::max(0.1f, std::min(10.0f, gain_boost_));
-  input_volume_ = std::max(0.0f, std::min(1.0f, input_volume_));
+  float min_gain = (std::min)(10.0f, gain_boost_);
+  gain_boost_ = (std::max)(0.1f, min_gain);
+  float min_volume = (std::min)(1.0f, input_volume_);
+  input_volume_ = (std::max)(0.0f, min_volume);
 
   // Detect if device is Bluetooth
   bool is_bluetooth = IsBluetoothDevice();
@@ -749,113 +806,199 @@ bool MicCapturePlugin::StopCapture() {
 }
 
 void MicCapturePlugin::CaptureThread() {
-  if (!mix_format_ || !capture_client_) {
-    return;
-  }
-
-  const UINT32 frame_size = mix_format_->nBlockAlign;
-  const size_t chunk_size_frames = 4096;  // Fixed chunk size in frames
-  const size_t chunk_size_bytes = chunk_size_frames * frame_size;
-  const size_t output_frame_count = chunk_size_frames;
-  
-  std::vector<uint8_t> raw_buffer(chunk_size_bytes);
-  std::vector<int16_t> output_buffer(output_frame_count);
-  size_t raw_buffer_pos = 0;
-
-  while (!should_stop_) {
-    UINT32 num_frames_available = 0;
-    HRESULT hr = capture_client_->GetNextPacketSize(&num_frames_available);
-    
-    if (FAILED(hr)) {
-      break;
+  try {
+    if (!mix_format_ || !capture_client_) {
+      return;
     }
 
-    while (num_frames_available > 0 && !should_stop_) {
-      BYTE* data = nullptr;
-      UINT32 num_frames = 0;
-      DWORD flags = 0;
-      UINT64 device_position = 0;
-      UINT64 qpc_position = 0;
+    // Use actual format from device
+    const UINT32 frame_size = mix_format_->nBlockAlign;
+    const WORD actual_channels = mix_format_->nChannels;
+    const WORD actual_bits_per_sample = mix_format_->wBitsPerSample;
+    
+    // Debug log format info (chỉ dùng để debug)
+    // OutputDebugStringA(("Format: " + std::to_string(actual_channels) + " channels, " + 
+    //                     std::to_string(actual_bits_per_sample) + " bits\n").c_str());
+    
+    // Fixed chunk size in frames (4096 frames)
+    const size_t chunk_size_frames = 4096;
+    const size_t chunk_size_bytes = chunk_size_frames * frame_size;
+    const size_t output_frame_count = chunk_size_frames;
+    
+    std::vector<uint8_t> raw_buffer(chunk_size_bytes);
+    std::vector<int16_t> output_buffer(output_frame_count);
+    size_t raw_buffer_pos = 0;
 
-      hr = capture_client_->GetBuffer(&data, &num_frames, &flags,
-                                       &device_position, &qpc_position);
+    while (!should_stop_) {
+      UINT32 num_frames_available = 0;
+      HRESULT hr = capture_client_->GetNextPacketSize(&num_frames_available);
       
       if (FAILED(hr)) {
         break;
       }
 
-      if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-        data = nullptr;
-      }
+      while (num_frames_available > 0 && !should_stop_) {
+        BYTE* data = nullptr;
+        UINT32 num_frames = 0;
+        DWORD flags = 0;
+        UINT64 device_position = 0;
+        UINT64 qpc_position = 0;
 
-      if (data != nullptr && num_frames > 0) {
-        const size_t data_size = num_frames * frame_size;
+        hr = capture_client_->GetBuffer(&data, &num_frames, &flags,
+                                         &device_position, &qpc_position);
         
-        // Copy data to raw buffer
-        if (raw_buffer_pos + data_size <= raw_buffer.size()) {
-          memcpy(raw_buffer.data() + raw_buffer_pos, data, data_size);
-          raw_buffer_pos += data_size;
+        if (FAILED(hr)) {
+          break;
         }
 
-        // Process chunk when we have enough data
-        if (raw_buffer_pos >= chunk_size_bytes) {
-          // Apply input volume
-          if (input_volume_ < 1.0f) {
-            int16_t* samples = reinterpret_cast<int16_t*>(raw_buffer.data());
-            const size_t sample_count = chunk_size_bytes / sizeof(int16_t);
-            for (size_t i = 0; i < sample_count; ++i) {
-              samples[i] = static_cast<int16_t>(
-                  static_cast<float>(samples[i]) * input_volume_);
+        // FIX 1: Xử lý silent flag nhưng vẫn release buffer
+        bool is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+        
+        // FIX 2: Chỉ xử lý khi có data thực sự và không silent
+        if (!is_silent && data != nullptr && num_frames > 0) {
+          const size_t data_size = num_frames * frame_size;
+          size_t data_offset = 0;
+          
+          // Process data in chunks
+          while (data_offset < data_size && !should_stop_) {
+            // Calculate how much space is left in buffer
+            const size_t space_available = raw_buffer.size() - raw_buffer_pos;
+            const size_t data_remaining = data_size - data_offset;
+            const size_t copy_size = (std::min)(space_available, data_remaining);
+            
+            // Copy data to raw buffer
+            if (copy_size > 0) {
+              memcpy(raw_buffer.data() + raw_buffer_pos, 
+                     reinterpret_cast<const uint8_t*>(data) + data_offset, 
+                     copy_size);
+              raw_buffer_pos += copy_size;
+              data_offset += copy_size;
+            }
+
+            // Process chunk when we have enough data
+            if (raw_buffer_pos >= chunk_size_bytes) {
+              // Convert from device format to 16-bit PCM
+              std::vector<int16_t> converted_samples;
+              const size_t input_frame_count = chunk_size_bytes / frame_size;
+              const size_t total_samples = input_frame_count * actual_channels;
+              converted_samples.resize(total_samples);
+              
+              bool conversion_success = false;
+              
+              // FIX 3: Thêm WAVE_FORMAT_EXTENSIBLE support
+              if (actual_bits_per_sample == 16 && 
+                  (mix_format_->wFormatTag == WAVE_FORMAT_PCM || 
+                   mix_format_->wFormatTag == WAVE_FORMAT_EXTENSIBLE)) {
+                // Already 16-bit PCM, convert to int16_t array
+                const int16_t* raw_samples = reinterpret_cast<const int16_t*>(raw_buffer.data());
+                converted_samples.assign(raw_samples, raw_samples + total_samples);
+                conversion_success = true;
+              } else if (actual_bits_per_sample == 32 && 
+                         (mix_format_->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+                          mix_format_->wFormatTag == WAVE_FORMAT_EXTENSIBLE)) {
+                // 32-bit float, convert to 16-bit PCM
+                const float* float_samples = reinterpret_cast<const float*>(raw_buffer.data());
+                for (size_t i = 0; i < total_samples; ++i) {
+                  // Clamp float value to [-1.0, 1.0] and convert to int16
+                  float sample = float_samples[i];
+                  if (sample > 1.0f) sample = 1.0f;
+                  if (sample < -1.0f) sample = -1.0f;
+                  converted_samples[i] = static_cast<int16_t>(sample * 32767.0f);
+                }
+                conversion_success = true;
+              } else if (actual_bits_per_sample == 24) {
+                // FIX 4: Thêm support cho 24-bit
+                const uint8_t* raw_bytes = raw_buffer.data();
+                for (size_t i = 0; i < total_samples; ++i) {
+                  size_t byte_offset = i * 3;
+                  // Read 24-bit as signed integer (little endian)
+                  int32_t sample24 = (static_cast<int32_t>(raw_bytes[byte_offset]) |
+                                     (static_cast<int32_t>(raw_bytes[byte_offset + 1]) << 8) |
+                                     (static_cast<int32_t>(raw_bytes[byte_offset + 2]) << 16));
+                  // Sign extend from 24-bit to 32-bit
+                  if (sample24 & 0x800000) {
+                    sample24 |= 0xFF000000;
+                  }
+                  // Convert to 16-bit
+                  converted_samples[i] = static_cast<int16_t>(sample24 >> 8);
+                }
+                conversion_success = true;
+              }
+              
+              // FIX 5: Log và skip nếu conversion thất bại
+              if (!conversion_success) {
+                // OutputDebugStringA("Unsupported audio format, skipping chunk\n");
+                raw_buffer_pos = 0;
+                continue;
+              }
+              
+              // FIX 6: Kiểm tra input_volume_ trước khi áp dụng
+              if (input_volume_ > 0.0f && input_volume_ < 1.0f) {
+                for (size_t i = 0; i < total_samples; ++i) {
+                  converted_samples[i] = static_cast<int16_t>(
+                      static_cast<float>(converted_samples[i]) * input_volume_);
+                }
+              }
+
+              // Convert to mono and apply gain boost
+              const size_t frames_to_process = converted_samples.size() / actual_channels;
+              const size_t output_frames = (std::min)(frames_to_process, output_frame_count);
+
+              ApplyGainBoostAndConvertToMono(converted_samples.data(), output_buffer.data(),
+                                              output_frames,
+                                              actual_channels, gain_boost_);
+
+              // Calculate decibel
+              double decibel = CalculateDecibel(output_buffer.data(), output_frames);
+
+              // Send audio data
+              try {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (event_sink_) {
+                  const size_t output_bytes = output_frames * sizeof(int16_t);
+                  std::vector<uint8_t> audio_data(
+                      reinterpret_cast<uint8_t*>(output_buffer.data()),
+                      reinterpret_cast<uint8_t*>(output_buffer.data()) + output_bytes);
+                  event_sink_->Success(flutter::EncodableValue(audio_data));
+                }
+              } catch (...) {
+                // Silently ignore errors to prevent crash
+              }
+
+              // Send decibel data
+              SendDecibelUpdate(decibel);
+
+              // FIX 7: Đảm bảo reset buffer position đúng cách
+              if (raw_buffer_pos > chunk_size_bytes) {
+                const size_t remaining = raw_buffer_pos - chunk_size_bytes;
+                memmove(raw_buffer.data(), raw_buffer.data() + chunk_size_bytes, remaining);
+                raw_buffer_pos = remaining;
+              } else {
+                raw_buffer_pos = 0;
+              }
             }
           }
+        }
 
-          // Convert to mono and apply gain boost
-          const int16_t* input_samples =
-              reinterpret_cast<const int16_t*>(raw_buffer.data());
-          const size_t input_frame_count =
-              chunk_size_bytes / (sizeof(int16_t) * mix_format_->nChannels);
-          const size_t frames_to_process =
-              std::min(input_frame_count, output_frame_count);
+        // FIX 8: Luôn release buffer, kể cả khi silent
+        hr = capture_client_->ReleaseBuffer(num_frames);
+        if (FAILED(hr)) {
+          break;
+        }
 
-          ApplyGainBoostAndConvertToMono(input_samples, output_buffer.data(),
-                                          frames_to_process,
-                                          mix_format_->nChannels, gain_boost_);
-
-          // Calculate decibel
-          double decibel = CalculateDecibel(output_buffer.data(), frames_to_process);
-
-          // Send audio data
-          {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (event_sink_) {
-              const size_t output_bytes = frames_to_process * sizeof(int16_t);
-              std::vector<uint8_t> audio_data(
-                  reinterpret_cast<uint8_t*>(output_buffer.data()),
-                  reinterpret_cast<uint8_t*>(output_buffer.data()) + output_bytes);
-              event_sink_->Success(flutter::EncodableValue(audio_data));
-            }
-          }
-
-          // Send decibel data (has its own lock)
-          SendDecibelUpdate(decibel);
-
-          raw_buffer_pos = 0;
+        hr = capture_client_->GetNextPacketSize(&num_frames_available);
+        if (FAILED(hr)) {
+          break;
         }
       }
 
-      hr = capture_client_->ReleaseBuffer(num_frames);
-      if (FAILED(hr)) {
-        break;
-      }
-
-      hr = capture_client_->GetNextPacketSize(&num_frames_available);
-      if (FAILED(hr)) {
-        break;
-      }
+      // Small sleep to prevent busy loop
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-
-    // Small sleep to prevent busy loop
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  } catch (...) {
+    // Catch any exceptions to prevent abort
+    std::lock_guard<std::mutex> lock(mutex_);
+    is_capturing_ = false;
   }
 }
 
