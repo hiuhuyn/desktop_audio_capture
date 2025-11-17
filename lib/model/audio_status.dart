@@ -1,6 +1,6 @@
 abstract class AudioStatus {
   final bool isActive;
-  
+
   const AudioStatus({
     required this.isActive,
   });
@@ -10,15 +10,13 @@ abstract class AudioStatus {
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-  
-    return other is AudioStatus &&
-      other.isActive == isActive;
+
+    return other is AudioStatus && other.isActive == isActive;
   }
 
   @override
   int get hashCode => isActive.hashCode;
 }
-
 
 class MicAudioStatus extends AudioStatus {
   final String? deviceName;
@@ -54,14 +52,14 @@ class MicAudioStatus extends AudioStatus {
   }
 
   @override
-  String toString() => '''MicAudioStatus(isActive: $isActive, deviceName: $deviceName)''';
+  String toString() =>
+      '''MicAudioStatus(isActive: $isActive, deviceName: $deviceName)''';
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-  
-    return other is MicAudioStatus &&
-      other.deviceName == deviceName;
+
+    return other is MicAudioStatus && other.deviceName == deviceName;
   }
 
   @override

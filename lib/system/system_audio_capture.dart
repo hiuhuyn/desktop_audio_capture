@@ -12,11 +12,11 @@ enum _SystemAudioMethod {
 }
 
 /// Class for capturing system audio (audio output from the device).
-/// 
+///
 /// This class allows you to capture audio that is being played by the system,
 /// such as music, videos, or other applications. It requires screen recording
 /// permissions on macOS.
-/// 
+///
 /// Example:
 /// ```dart
 /// final systemCapture = SystemAudioCapture(
@@ -25,20 +25,20 @@ enum _SystemAudioMethod {
 ///     channels: 2,
 ///   ),
 /// );
-/// 
+///
 /// await systemCapture.startCapture();
-/// 
+///
 /// // Listen to audio stream
 /// systemCapture.audioStream?.listen((audioData) {
 ///   // Process audio bytes
 ///   print('Received ${audioData.length} bytes');
 /// });
-/// 
+///
 /// // Listen to decibel readings
 /// systemCapture.decibelStream?.listen((data) {
 ///   print('Decibel: ${data.decibel} dB');
 /// });
-/// 
+///
 /// // Stop when done
 /// await systemCapture.stopCapture();
 /// ```
@@ -62,14 +62,14 @@ class SystemAudioCapture extends AudioCapture {
   bool _isRecording = false;
 
   /// Stream of raw audio data bytes from system audio capture.
-  /// 
+  ///
   /// Returns a [Stream<Uint8List>] containing the captured audio data.
   /// The stream is only available after [startCapture] has been called.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await systemCapture.startCapture();
-  /// 
+  ///
   /// systemCapture.audioStream?.listen((audioData) {
   ///   // Process audio bytes
   ///   final audioBuffer = audioData.buffer.asUint8List();
@@ -77,12 +77,12 @@ class SystemAudioCapture extends AudioCapture {
   /// });
   /// ```
   Stream<Uint8List>? get audioStream => _audioStream;
-  
+
   /// Stream of system audio capture status updates.
-  /// 
+  ///
   /// Returns a [Stream<SystemAudioStatus>] containing status information:
   /// - [SystemAudioStatus.isActive]: bool - whether system audio capture is currently active
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// systemCapture.statusStream?.listen((status) {
@@ -107,17 +107,17 @@ class SystemAudioCapture extends AudioCapture {
   }
 
   /// Stream of system audio decibel (dB) readings.
-  /// 
+  ///
   /// Returns a [Stream<DecibelData>] containing:
   /// - `decibel`: double - decibel value (-120 to 0 dB)
   /// - `timestamp`: double - Unix timestamp
-  /// 
+  ///
   /// The stream is only available while recording is active.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await systemCapture.startCapture();
-  /// 
+  ///
   /// systemCapture.decibelStream?.listen((data) {
   ///   print('System audio level: ${data.decibel.toStringAsFixed(1)} dB');
   ///   print('Timestamp: ${DateTime.fromMillisecondsSinceEpoch((data.timestamp * 1000).toInt())}');
@@ -134,7 +134,9 @@ class SystemAudioCapture extends AudioCapture {
       if (event is Map) {
         return DecibelData.fromMap(Map<String, dynamic>.from(event));
       }
-      return DecibelData(decibel: -120.0, timestamp: DateTime.now().millisecondsSinceEpoch / 1000.0);
+      return DecibelData(
+          decibel: -120.0,
+          timestamp: DateTime.now().millisecondsSinceEpoch / 1000.0);
     });
     return _decibelStream;
   }
@@ -142,10 +144,10 @@ class SystemAudioCapture extends AudioCapture {
   SystemAudioConfig _config = SystemAudioConfig();
 
   /// Creates a new [SystemAudioCapture] instance.
-  /// 
+  ///
   /// [config] is optional. If not provided, default configuration will be used
   /// (sampleRate: 16000, channels: 1).
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = SystemAudioCapture(
@@ -160,21 +162,21 @@ class SystemAudioCapture extends AudioCapture {
   }
 
   /// Updates the audio capture configuration.
-  /// 
+  ///
   /// This method allows you to change the configuration after the instance
   /// has been created. The new configuration will be applied on the next
   /// [startCapture] call.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = SystemAudioCapture();
-  /// 
+  ///
   /// // Update config before starting
   /// capture.updateConfig(SystemAudioConfig(
   ///   sampleRate: 48000,
   ///   channels: 2,
   /// ));
-  /// 
+  ///
   /// await capture.startCapture();
   /// ```
   void updateConfig(SystemAudioConfig config) {
@@ -182,21 +184,21 @@ class SystemAudioCapture extends AudioCapture {
   }
 
   /// Starts capturing system audio.
-  /// 
+  ///
   /// This method will request necessary permissions (screen recording on macOS)
   /// and begin capturing audio from the system output.
-  /// 
+  ///
   /// [config] is optional. If provided, it will update the current configuration
   /// before starting capture.
-  /// 
+  ///
   /// Throws an [Exception] if:
   /// - Permissions are not granted
   /// - Capture fails to start
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = SystemAudioCapture();
-  /// 
+  ///
   /// try {
   ///   await capture.startCapture(
   ///     config: SystemAudioConfig(
@@ -251,18 +253,18 @@ class SystemAudioCapture extends AudioCapture {
   }
 
   /// Stops capturing system audio.
-  /// 
+  ///
   /// This method will stop the active capture and close all associated streams.
   /// If capture is not active, this method does nothing.
-  /// 
+  ///
   /// Throws an [Exception] if stopping fails.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await systemCapture.startCapture();
-  /// 
+  ///
   /// // ... use audio stream ...
-  /// 
+  ///
   /// await systemCapture.stopCapture();
   /// print('System audio capture stopped');
   /// ```
@@ -288,9 +290,9 @@ class SystemAudioCapture extends AudioCapture {
   }
 
   /// Whether system audio capture is currently recording.
-  /// 
+  ///
   /// Returns `true` if capture is active, `false` otherwise.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// if (systemCapture.isRecording) {
@@ -303,14 +305,14 @@ class SystemAudioCapture extends AudioCapture {
   bool get isRecording => _isRecording;
 
   /// Requests necessary permissions for system audio capture.
-  /// 
+  ///
   /// On macOS, this requests screen recording permission which is required
   /// to capture system audio.
-  /// 
+  ///
   /// Returns `true` if permissions are granted.
-  /// 
+  ///
   /// Throws an [Exception] if permissions are not granted.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// try {

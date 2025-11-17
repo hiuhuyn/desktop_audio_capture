@@ -13,11 +13,11 @@ enum _MicAudioMethod {
 }
 
 /// Class for capturing audio from microphone input devices.
-/// 
+///
 /// This class allows you to capture audio from connected microphones,
 /// including built-in microphones, external USB microphones, and Bluetooth
 /// microphones. It requires microphone permissions.
-/// 
+///
 /// Example:
 /// ```dart
 /// final micCapture = MicAudioCapture(
@@ -27,29 +27,29 @@ enum _MicAudioMethod {
 ///     gainBoost: 2.5,
 ///   ),
 /// );
-/// 
+///
 /// // Check for available devices
 /// final devices = await micCapture.getAvailableInputDevices();
 /// print('Available microphones: ${devices.length}');
-/// 
+///
 /// await micCapture.startCapture();
-/// 
+///
 /// // Listen to audio stream
 /// micCapture.audioStream?.listen((audioData) {
 ///   // Process audio bytes
 ///   print('Received ${audioData.length} bytes');
 /// });
-/// 
+///
 /// // Listen to status updates
 /// micCapture.statusStream?.listen((status) {
 ///   print('Mic active: ${status.isActive}, Device: ${status.deviceName}');
 /// });
-/// 
+///
 /// // Listen to decibel readings
 /// micCapture.decibelStream?.listen((data) {
 ///   print('Mic level: ${data.decibel} dB');
 /// });
-/// 
+///
 /// // Stop when done
 /// await micCapture.stopCapture();
 /// ```
@@ -73,14 +73,14 @@ class MicAudioCapture extends AudioCapture {
   bool _isRecording = false;
 
   /// Stream of raw audio data bytes from microphone capture.
-  /// 
+  ///
   /// Returns a [Stream<Uint8List>] containing the captured audio data.
   /// The stream is only available after [startCapture] has been called.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await micCapture.startCapture();
-  /// 
+  ///
   /// micCapture.audioStream?.listen((audioData) {
   ///   // Process audio bytes
   ///   final audioBuffer = audioData.buffer.asUint8List();
@@ -109,13 +109,13 @@ class MicAudioCapture extends AudioCapture {
     });
     return _audioStream;
   }
-  
+
   /// Stream of microphone status updates.
-  /// 
+  ///
   /// Returns a [Stream<MicStatus>] containing:
   /// - `isActive`: bool - whether mic is currently active
   /// - `deviceName`: String? - name of the microphone device (if available)
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// micCapture.statusStream?.listen((status) {
@@ -143,21 +143,21 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Stream of microphone decibel (dB) readings.
-  /// 
+  ///
   /// Returns a [Stream<DecibelData>] containing:
   /// - `decibel`: double - decibel value (-120 to 0 dB)
   /// - `timestamp`: double - Unix timestamp
-  /// 
+  ///
   /// The stream is only available while recording is active.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await micCapture.startCapture();
-  /// 
+  ///
   /// micCapture.decibelStream?.listen((data) {
   ///   print('Microphone level: ${data.decibel.toStringAsFixed(1)} dB');
   ///   print('Timestamp: ${DateTime.fromMillisecondsSinceEpoch((data.timestamp * 1000).toInt())}');
-  ///   
+  ///
   ///   // Use for visual feedback, volume meters, etc.
   ///   if (data.decibel > -40) {
   ///     print('Loud input detected!');
@@ -169,10 +169,10 @@ class MicAudioCapture extends AudioCapture {
   MicAudioConfig _config = MicAudioConfig();
 
   /// Creates a new [MicAudioCapture] instance.
-  /// 
+  ///
   /// [config] is optional. If not provided, default configuration will be used
   /// (sampleRate: 16000, channels: 1, bitDepth: 16, gainBoost: 2.5, inputVolume: 1.0).
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = MicAudioCapture(
@@ -189,22 +189,22 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Updates the audio capture configuration.
-  /// 
+  ///
   /// This method allows you to change the configuration after the instance
   /// has been created. The new configuration will be applied on the next
   /// [startCapture] call.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = MicAudioCapture();
-  /// 
+  ///
   /// // Update config before starting
   /// capture.updateConfig(MicAudioConfig(
   ///   sampleRate: 48000,
   ///   channels: 2,
   ///   gainBoost: 2.0,
   /// ));
-  /// 
+  ///
   /// await capture.startCapture();
   /// ```
   void updateConfig(MicAudioConfig config) {
@@ -212,22 +212,22 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Starts capturing audio from the microphone.
-  /// 
+  ///
   /// This method will request necessary permissions (microphone permission)
   /// and begin capturing audio from the default or configured microphone.
-  /// 
+  ///
   /// [config] is optional. If provided, it will update the current configuration
   /// before starting capture.
-  /// 
+  ///
   /// Throws an [Exception] if:
   /// - Permissions are not granted
   /// - No microphone is available
   /// - Capture fails to start
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final capture = MicAudioCapture();
-  /// 
+  ///
   /// try {
   ///   await capture.startCapture(
   ///     config: MicAudioConfig(
@@ -260,13 +260,14 @@ class MicAudioCapture extends AudioCapture {
         );
 
         if (result is! bool || result != true) {
-          final errorMsg = result is String 
-              ? result 
+          final errorMsg = result is String
+              ? result
               : 'Failed to start microphone capture. Returned: $result';
           throw Exception(errorMsg);
         }
       } on PlatformException catch (e) {
-        throw Exception('Failed to start microphone capture: ${e.message ?? e.code}');
+        throw Exception(
+            'Failed to start microphone capture: ${e.message ?? e.code}');
       }
 
       // Create audio stream
@@ -289,7 +290,9 @@ class MicAudioCapture extends AudioCapture {
         if (event is Map) {
           return DecibelData.fromMap(Map<String, dynamic>.from(event));
         }
-        return DecibelData(decibel: -120.0, timestamp: DateTime.now().millisecondsSinceEpoch / 1000.0);
+        return DecibelData(
+            decibel: -120.0,
+            timestamp: DateTime.now().millisecondsSinceEpoch / 1000.0);
       });
 
       // Status stream is created lazily via getter, no need to recreate here
@@ -301,18 +304,18 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Stops capturing microphone audio.
-  /// 
+  ///
   /// This method will stop the active capture and close all associated streams.
   /// If capture is not active, this method does nothing.
-  /// 
+  ///
   /// Throws an [Exception] if stopping fails.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// await micCapture.startCapture();
-  /// 
+  ///
   /// // ... use audio stream ...
-  /// 
+  ///
   /// await micCapture.stopCapture();
   /// print('Microphone capture stopped');
   /// ```
@@ -335,12 +338,12 @@ class MicAudioCapture extends AudioCapture {
     } catch (e) {
       rethrow;
     }
-  } 
+  }
 
   /// Whether microphone capture is currently recording.
-  /// 
+  ///
   /// Returns `true` if capture is active, `false` otherwise.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// if (micCapture.isRecording) {
@@ -353,14 +356,14 @@ class MicAudioCapture extends AudioCapture {
   bool get isRecording => _isRecording;
 
   /// Requests necessary permissions for microphone capture.
-  /// 
+  ///
   /// This requests microphone permission which is required to capture audio
   /// from input devices.
-  /// 
+  ///
   /// Returns `true` if permissions are granted.
-  /// 
+  ///
   /// Throws an [Exception] if permissions are not granted.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// try {
@@ -383,10 +386,10 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Checks if there is any available input device (microphone).
-  /// 
+  ///
   /// Returns `true` if there is at least one available input device,
   /// `false` if there is no available input device.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final hasDevice = await micCapture.hasInputDevice();
@@ -409,25 +412,25 @@ class MicAudioCapture extends AudioCapture {
   }
 
   /// Gets a list of all available input devices (microphones).
-  /// 
+  ///
   /// Returns a list of [InputDevice] containing device information:
   /// - `id`: String - unique device ID
   /// - `name`: String - device name
   /// - `type`: [InputDeviceType] - device type (builtIn, bluetooth, external)
   /// - `channelCount`: int - number of audio channels
   /// - `isDefault`: bool - whether the device is the default device
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// final devices = await micCapture.getAvailableInputDevices();
-  /// 
+  ///
   /// for (final device in devices) {
   ///   print('Device: ${device.name}');
   ///   print('  Type: ${device.type}');
   ///   print('  Channels: ${device.channelCount}');
   ///   print('  Default: ${device.isDefault}');
   /// }
-  /// 
+  ///
   /// // Find default device
   /// final defaultDevice = devices.firstWhere(
   ///   (device) => device.isDefault,
@@ -440,11 +443,11 @@ class MicAudioCapture extends AudioCapture {
       final devices = await _channel.invokeMethod<List<dynamic>>(
         _MicAudioMethod.getAvailableInputDevices.name,
       );
-      
+
       if (devices == null) {
         return [];
       }
-      
+
       return devices
           .whereType<Map>()
           .map((device) => InputDevice.fromMap(

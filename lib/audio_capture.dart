@@ -14,31 +14,31 @@ export 'package:desktop_audio_capture/model/input_device_type.dart';
 export 'package:desktop_audio_capture/model/audio_status.dart';
 
 /// Abstract base class for audio capture functionality.
-/// 
+///
 /// This class defines the common interface for capturing audio from different sources
 /// (microphone or system audio). Implementations include [MicAudioCapture] and
 /// [SystemAudioCapture].
-/// 
+///
 /// Example:
 /// ```dart
 /// final audioCapture = MicAudioCapture();
 /// await audioCapture.initialize();
 /// await audioCapture.startCapture();
-/// 
+///
 /// // Listen to audio stream
 /// audioCapture.audioStream?.listen((audioData) {
 ///   // Process audio data
 /// });
-/// 
+///
 /// // Stop when done
 /// await audioCapture.stopCapture();
 /// await audioCapture.dispose();
 /// ```
 abstract class AudioCapture {
   /// Whether the audio capture is currently recording.
-  /// 
+  ///
   /// Returns `true` if capture is active, `false` otherwise.
-  /// 
+  ///
   /// Example:
   /// ```dart
   /// if (audioCapture.isRecording) {
@@ -49,11 +49,11 @@ abstract class AudioCapture {
 }
 
 /// Abstract base class for audio capture configuration.
-/// 
+///
 /// This class defines the common interface for configuration objects used
 /// to configure audio capture settings. Implementations include [MicAudioConfig]
 /// and [SystemAudioConfig].
-/// 
+///
 /// Example:
 /// ```dart
 /// final config = MicAudioConfig(
