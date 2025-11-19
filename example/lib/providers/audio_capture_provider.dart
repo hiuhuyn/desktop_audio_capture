@@ -3,34 +3,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:desktop_audio_capture/audio_capture.dart';
-import 'package:vad/vad.dart' as vad;
 
 class AudioCaptureProvider with ChangeNotifier {
   final MicAudioCapture _micCapture = MicAudioCapture();
   final SystemAudioCapture _systemCapture = SystemAudioCapture();
-  final vad.VadHandler _vadHandler = vad.VadHandler.create(isDebug: true);
 
-  void _setupVadHandler() {
-    _vadHandler.onSpeechStart.listen((_) {
-      debugPrint('Speech detected.');
-    });
-
-    _vadHandler.onRealSpeechStart.listen((_) {});
-
-    _vadHandler.onSpeechEnd.listen((List<double> samples) {
-      debugPrint(
-          'Speech ended, first 10 samples: ${samples.take(10).toList()}');
-    });
-
-    _vadHandler.onVADMisfire.listen((_) {
-      debugPrint('VAD misfire detected.');
-    });
-
-    _vadHandler.onError.listen((String message) {
-      debugPrint('Error: $message');
-    });
-  }
-
+  
   // Mic state
   bool _micActive = false;
   String? _micDeviceName;
@@ -67,7 +45,6 @@ class AudioCaptureProvider with ChangeNotifier {
 
   AudioCaptureProvider() {
     _setupStatusListeners();
-    _setupVadHandler();
   }
 
   void _setupStatusListeners() {
@@ -90,7 +67,6 @@ class AudioCaptureProvider with ChangeNotifier {
         _micActive = false;
         _micDeviceName = null;
         _micDecibel = -120.0;
-        _vadHandler.stopListening();
         notifyListeners();
       } else {
         // Update config if provided
@@ -122,9 +98,6 @@ class AudioCaptureProvider with ChangeNotifier {
               // Errors will be handled by actual listeners
             },
             cancelOnError: false,
-          );
-          _vadHandler.startListening(
-            audioStream: _micCapture.audioStream!,
           );
         }
 
