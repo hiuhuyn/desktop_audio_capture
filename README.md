@@ -14,12 +14,11 @@ A Flutter plugin for capturing audio on desktop platforms (macOS, Linux, Windows
 ## Platform Support
 
 - ✅ **macOS 13.0+** (Ventura or later) - Fully tested and working
-- ⚠️ **Linux** - Implemented but not yet tested
-- ⚠️ **Windows** - Implemented but not yet tested
+- ✅ **Linux** - Supported
+- ✅ **Windows** - Supported
 
 > **Note**: 
 > - macOS requires **macOS 13.0 (Ventura) or later** because System Audio Capture uses APIs available from macOS 13.0+
-> - Linux and Windows platforms are implemented but have not been tested yet
 
 ## Screenshots
 
@@ -83,7 +82,9 @@ micCapture.decibelStream?.listen((decibelData) {
 // Listen to status updates
 micCapture.statusStream?.listen((status) {
   print('Mic active: ${status.isActive}');
-  print('Device: ${status.deviceName}');
+  if (status.deviceName != null) {
+    print('Device: ${status.deviceName}');
+  }
 });
 
 // Stop capture
@@ -115,6 +116,12 @@ systemCapture.audioStream?.listen((audioData) {
 // Listen to decibel readings
 systemCapture.decibelStream?.listen((decibelData) {
   print('Decibel: ${decibelData.decibel} dB');
+  print('Timestamp: ${decibelData.timestamp}');
+});
+
+// Listen to status updates
+systemCapture.statusStream?.listen((status) {
+  print('System audio active: ${status.isActive}');
 });
 
 // Stop capture
@@ -131,7 +138,7 @@ final hasDevice = await micCapture.hasInputDevice();
 final devices = await micCapture.getAvailableInputDevices();
 for (final device in devices) {
   print('Device: ${device.name}');
-  print('Type: ${device.type}');
+  print('Type: ${device.type.toString()}');
   print('Channels: ${device.channelCount}');
   print('Default: ${device.isDefault}');
 }
@@ -148,12 +155,13 @@ for (final device in devices) {
 - `requestPermissions()`: Request microphone access permission
 - `hasInputDevice()`: Check if input device is available
 - `getAvailableInputDevices()`: Get list of available input devices
+- `updateConfig(MicAudioConfig config)`: Update configuration
 
 #### Streams
 
 - `audioStream`: Stream of audio data (Uint8List)
 - `decibelStream`: Stream of decibel readings (DecibelData)
-- `statusStream`: Stream of status updates (MicStatus)
+- `statusStream`: Stream of status updates (MicAudioStatus)
 
 #### Properties
 
@@ -166,13 +174,13 @@ for (final device in devices) {
 - `startCapture({SystemAudioConfig? config})`: Start capturing system audio
 - `stopCapture()`: Stop capture
 - `requestPermissions()`: Request screen recording permission (macOS)
-- `dispose()`: Release resources
+- `updateConfig(SystemAudioConfig config)`: Update configuration
 
 #### Streams
 
 - `audioStream`: Stream of audio data (Uint8List)
 - `decibelStream`: Stream of decibel readings (DecibelData)
-- `statusStream`: Stream of status updates (Map<String, dynamic>)
+- `statusStream`: Stream of status updates (SystemAudioStatus)
 
 #### Properties
 
@@ -194,7 +202,24 @@ for (final device in devices) {
 ### DecibelData
 
 - `decibel` (double): Decibel value (-120 to 0 dB)
-- `timestamp` (double): Unix timestamp
+- `timestamp` (double): Unix timestamp in seconds
+
+### MicAudioStatus
+
+- `isActive` (bool): Whether microphone capture is currently active
+- `deviceName` (String?): Name of the microphone device (if available)
+
+### SystemAudioStatus
+
+- `isActive` (bool): Whether system audio capture is currently active
+
+### InputDevice
+
+- `id` (String): Unique identifier of the device
+- `name` (String): Human-readable name of the device
+- `type` (InputDeviceType): Type of device (builtIn, bluetooth, external)
+- `channelCount` (int): Number of audio channels supported
+- `isDefault` (bool): Whether this device is the system default input device
 
 ## Permissions
 
